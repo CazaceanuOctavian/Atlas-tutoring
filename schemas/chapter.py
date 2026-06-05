@@ -1,7 +1,11 @@
+from __future__ import annotations
+
 import uuid
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
+
+from .lecture import LectureDetail
 
 
 class _OrmBase(BaseModel):
@@ -29,5 +33,4 @@ class Chapter(ChapterBase):
 
 class ChapterDetail(Chapter):
     """Chapter with its lectures pre-loaded."""
-    from schemas.lecture import LectureDetail
     lectures: list[LectureDetail] = []

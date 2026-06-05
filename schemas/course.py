@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
+
+from .chapter import ChapterDetail
 
 
 class _OrmBase(BaseModel):
@@ -29,6 +33,5 @@ class Course(CourseBase):
 
 
 class CourseDetail(Course):
-    """Course with full chapter → lecture → block tree."""
-    from schemas.chapter import ChapterDetail
+    """Course with full chapter -> lecture -> block tree."""
     chapters: list[ChapterDetail] = []

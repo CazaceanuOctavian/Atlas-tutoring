@@ -1,21 +1,25 @@
-# Import all models BEFORE creating tables
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
+
+# Import all models BEFORE creating tables so they register on Base.metadata
+import models  # noqa: F401
 
 from db.session import engine
 from models.base import Base
+from routers.courses import router as courses_router
+from routers.exercises import router as exercises_router
+from routers.lectures import router as lectures_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create tables (DEV ONLY)
+    # Create tables (DEV ONLY — use Alembic in production)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
     yield
 
-app = FastAPI(lifespan=lifespan)
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -35,6 +39,13 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # ---------------------------
+    # Routers
+    # ---------------------------
+    app.include_router(courses_router,   prefix="/api/v1")
+    app.include_router(lectures_router,  prefix="/api/v1")
+    app.include_router(exercises_router, prefix="/api/v1")
 
     # ---------------------------
     # Health Check
