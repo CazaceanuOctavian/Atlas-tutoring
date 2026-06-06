@@ -28,9 +28,9 @@
           pytest
           pytest-asyncio
 
-	  psycopg2-binary
-	  asyncpg
-	  sqlalchemy
+          psycopg2-binary
+          asyncpg
+          sqlalchemy
         ]);
 
       in
@@ -48,10 +48,18 @@
             echo "Firebase CLI $(firebase --version)"
             echo ""
             echo "Quick-start:"
-            echo "  uvicorn app.main:app --reload   # start dev server"
+            echo "  uvicorn main:app --reload   # start dev server"
             echo "  firebase emulators:start        # start Firebase emulators"
+
+            # Export DB connection string from env.json
+            if [ -f env.json ]; then
+              export DATABASE_URL=$(python3 -c "import json; d=json.load(open('env.json')); print(d['db_secret']['connection_string'])")
+              echo "DATABASE_URL exported."
+            else
+              echo "WARNING: env.json not found — DATABASE_URL not set."
+            fi
           '';
-        };
+        };  
 
         packages.default = pkgs.stdenv.mkDerivation {
           pname = "fastapi-firebase-app";
@@ -77,4 +85,3 @@
       }
     );
 }
-
