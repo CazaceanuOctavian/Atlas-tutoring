@@ -7,9 +7,9 @@ from sqlalchemy.orm import selectinload
 
 from db.session import get_db
 
-
 from models.chapter import Chapter
 from models.course import Course
+from models.lecture import Lecture
 from schemas.chapter import Chapter as ChapterSchema
 from schemas.course import Course as CourseSchema
 from schemas.course import CourseCreate, CourseDetail, CourseUpdate
@@ -54,7 +54,8 @@ async def get_course_detail(course_id: uuid.UUID, db: AsyncSession = Depends(get
         select(Course)
         .where(Course.id == course_id)
         .options(
-            selectinload(Course.chapters).selectinload(Chapter.lectures)
+            selectinload(Course.chapters).selectinload(Chapter.lectures).selectinload(Lecture.blocks),
+            selectinload(Course.chapters).selectinload(Chapter.lectures).selectinload(Lecture.exercises),
         )
     )
     course = result.first()

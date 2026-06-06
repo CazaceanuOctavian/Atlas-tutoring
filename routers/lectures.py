@@ -19,6 +19,7 @@ from schemas.lecture_block import LectureBlockCreate, LectureBlockUpdate
 
 router = APIRouter(prefix="/lectures", tags=["lectures"])
 
+
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
@@ -127,7 +128,7 @@ async def create_block(
 ):
     if not await db.get(Lecture, lecture_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Lecture not found")
-    block = LectureBlock(**payload.model_dump(), lecture_id=lecture_id)
+    block = LectureBlock(**payload.model_dump())
     db.add(block)
     await db.commit()
     await db.refresh(block)

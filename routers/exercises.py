@@ -19,6 +19,7 @@ from schemas.test_case import TestCaseCreate, TestCaseUpdate
 
 router = APIRouter(prefix="/exercises", tags=["exercises"])
 
+
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
@@ -110,7 +111,7 @@ async def create_block(
 ):
     if not await db.get(Exercise, exercise_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Exercise not found")
-    block = ExerciseBlock(**payload.model_dump(), exercise_id=exercise_id)
+    block = ExerciseBlock(**payload.model_dump())
     db.add(block)
     await db.commit()
     await db.refresh(block)
@@ -176,7 +177,7 @@ async def create_test_case(
 ):
     if not await db.get(Exercise, exercise_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Exercise not found")
-    test_case = TestCase(**payload.model_dump(), exercise_id=exercise_id)
+    test_case = TestCase(**payload.model_dump())
     db.add(test_case)
     await db.commit()
     await db.refresh(test_case)
