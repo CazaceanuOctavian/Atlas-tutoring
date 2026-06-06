@@ -16,6 +16,7 @@
           uvicorn
           pydantic
           pydantic-settings
+          email-validator
           python-multipart
           firebase-admin
           httpx
