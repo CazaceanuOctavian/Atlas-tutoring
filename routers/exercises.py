@@ -4,12 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.session import get_db
+from dependencies import admin_only, student_only
 
+from db.session import get_db
 from models.exercise import Exercise
 from models.exercise_block import ExerciseBlock
 from models.lecture import Lecture
 from models.test_case import TestCase
+from models.user import User
 from schemas.exercise import Exercise as ExerciseSchema
 from schemas.exercise import ExerciseCreate, ExerciseUpdate
 from schemas.exercise_block import ExerciseBlock as ExerciseBlockSchema
@@ -20,18 +22,14 @@ from schemas.test_case import TestCaseCreate, TestCaseUpdate
 router = APIRouter(prefix="/exercises", tags=["exercises"])
 
 
-# ---------------------------------------------------------------------------
-# CRUD
-# ---------------------------------------------------------------------------
-
 @router.get("/", response_model=list[ExerciseSchema])
 async def list_exercises(
     lecture_id: uuid.UUID | None = None,
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(student_only),
 ):
-    """List exercises, optionally filtered by lecture."""
     q = select(Exercise).order_by(Exercise.position)
     if lecture_id:
         q = q.where(Exercise.lecture_id == lecture_id)
@@ -40,7 +38,11 @@ async def list_exercises(
 
 
 @router.post("/", response_model=ExerciseSchema, status_code=status.HTTP_201_CREATED)
-async def create_exercise(payload: ExerciseCreate, db: AsyncSession = Depends(get_db)):
+async def create_exercise(
+    payload: ExerciseCreate,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
+):
     if not await db.get(Lecture, payload.lecture_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Lecture not found")
     exercise = Exercise(**payload.model_dump())
@@ -51,7 +53,11 @@ async def create_exercise(payload: ExerciseCreate, db: AsyncSession = Depends(ge
 
 
 @router.get("/{exercise_id}", response_model=ExerciseSchema)
-async def get_exercise(exercise_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_exercise(
+    exercise_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(student_only),
+):
     exercise = await db.get(Exercise, exercise_id)
     if not exercise:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Exercise not found")
@@ -63,6 +69,7 @@ async def update_exercise(
     exercise_id: uuid.UUID,
     payload: ExerciseUpdate,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
 ):
     exercise = await db.get(Exercise, exercise_id)
     if not exercise:
@@ -75,7 +82,11 @@ async def update_exercise(
 
 
 @router.delete("/{exercise_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_exercise(exercise_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def delete_exercise(
+    exercise_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
+):
     exercise = await db.get(Exercise, exercise_id)
     if not exercise:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Exercise not found")
@@ -88,7 +99,11 @@ async def delete_exercise(exercise_id: uuid.UUID, db: AsyncSession = Depends(get
 # ---------------------------------------------------------------------------
 
 @router.get("/{exercise_id}/blocks", response_model=list[ExerciseBlockSchema])
-async def list_blocks(exercise_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def list_blocks(
+    exercise_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(student_only),
+):
     if not await db.get(Exercise, exercise_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Exercise not found")
     result = await db.scalars(
@@ -99,15 +114,12 @@ async def list_blocks(exercise_id: uuid.UUID, db: AsyncSession = Depends(get_db)
     return result.all()
 
 
-@router.post(
-    "/{exercise_id}/blocks",
-    response_model=ExerciseBlockSchema,
-    status_code=status.HTTP_201_CREATED,
-)
+@router.post("/{exercise_id}/blocks", response_model=ExerciseBlockSchema, status_code=status.HTTP_201_CREATED)
 async def create_block(
     exercise_id: uuid.UUID,
     payload: ExerciseBlockCreate,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
 ):
     if not await db.get(Exercise, exercise_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Exercise not found")
@@ -124,6 +136,7 @@ async def update_block(
     block_id: uuid.UUID,
     payload: ExerciseBlockUpdate,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
 ):
     block = await db.get(ExerciseBlock, block_id)
     if not block or block.exercise_id != exercise_id:
@@ -135,14 +148,12 @@ async def update_block(
     return block
 
 
-@router.delete(
-    "/{exercise_id}/blocks/{block_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
+@router.delete("/{exercise_id}/blocks/{block_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_block(
     exercise_id: uuid.UUID,
     block_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
 ):
     block = await db.get(ExerciseBlock, block_id)
     if not block or block.exercise_id != exercise_id:
@@ -156,7 +167,11 @@ async def delete_block(
 # ---------------------------------------------------------------------------
 
 @router.get("/{exercise_id}/test-cases", response_model=list[TestCaseSchema])
-async def list_test_cases(exercise_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def list_test_cases(
+    exercise_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(student_only),
+):
     if not await db.get(Exercise, exercise_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Exercise not found")
     result = await db.scalars(
@@ -165,15 +180,12 @@ async def list_test_cases(exercise_id: uuid.UUID, db: AsyncSession = Depends(get
     return result.all()
 
 
-@router.post(
-    "/{exercise_id}/test-cases",
-    response_model=TestCaseSchema,
-    status_code=status.HTTP_201_CREATED,
-)
+@router.post("/{exercise_id}/test-cases", response_model=TestCaseSchema, status_code=status.HTTP_201_CREATED)
 async def create_test_case(
     exercise_id: uuid.UUID,
     payload: TestCaseCreate,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
 ):
     if not await db.get(Exercise, exercise_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Exercise not found")
@@ -184,15 +196,13 @@ async def create_test_case(
     return test_case
 
 
-@router.patch(
-    "/{exercise_id}/test-cases/{test_case_id}",
-    response_model=TestCaseSchema,
-)
+@router.patch("/{exercise_id}/test-cases/{test_case_id}", response_model=TestCaseSchema)
 async def update_test_case(
     exercise_id: uuid.UUID,
     test_case_id: uuid.UUID,
     payload: TestCaseUpdate,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
 ):
     test_case = await db.get(TestCase, test_case_id)
     if not test_case or test_case.exercise_id != exercise_id:
@@ -204,14 +214,12 @@ async def update_test_case(
     return test_case
 
 
-@router.delete(
-    "/{exercise_id}/test-cases/{test_case_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
+@router.delete("/{exercise_id}/test-cases/{test_case_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_test_case(
     exercise_id: uuid.UUID,
     test_case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
 ):
     test_case = await db.get(TestCase, test_case_id)
     if not test_case or test_case.exercise_id != exercise_id:

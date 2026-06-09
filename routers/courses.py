@@ -5,16 +5,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from dependencies import admin_only, student_only
 from db.session import get_db
-
 from models.chapter import Chapter
 from models.course import Course
 from models.lecture import Lecture
+from models.user import User
 from schemas.chapter import Chapter as ChapterSchema
 from schemas.course import Course as CourseSchema
 from schemas.course import CourseCreate, CourseDetail, CourseUpdate
 
 router = APIRouter(prefix="/courses", tags=["courses"])
+
 
 # ---------------------------------------------------------------------------
 # CRUD
@@ -25,13 +27,18 @@ async def list_courses(
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(student_only),
 ):
     result = await db.scalars(select(Course).offset(skip).limit(limit))
     return result.all()
 
 
 @router.post("/", response_model=CourseSchema, status_code=status.HTTP_201_CREATED)
-async def create_course(payload: CourseCreate, db: AsyncSession = Depends(get_db)):
+async def create_course(
+    payload: CourseCreate,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
+):
     course = Course(**payload.model_dump())
     db.add(course)
     await db.commit()
@@ -40,7 +47,11 @@ async def create_course(payload: CourseCreate, db: AsyncSession = Depends(get_db
 
 
 @router.get("/{course_id}", response_model=CourseSchema)
-async def get_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_course(
+    course_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(student_only),
+):
     course = await db.get(Course, course_id)
     if not course:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Course not found")
@@ -48,8 +59,11 @@ async def get_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{course_id}/detail", response_model=CourseDetail)
-async def get_course_detail(course_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    """Return the full course tree: chapters → lectures → blocks & exercises."""
+async def get_course_detail(
+    course_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(student_only),
+):
     result = await db.scalars(
         select(Course)
         .where(Course.id == course_id)
@@ -69,6 +83,7 @@ async def update_course(
     course_id: uuid.UUID,
     payload: CourseUpdate,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
 ):
     course = await db.get(Course, course_id)
     if not course:
@@ -81,7 +96,11 @@ async def update_course(
 
 
 @router.delete("/{course_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def delete_course(
+    course_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
+):
     course = await db.get(Course, course_id)
     if not course:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Course not found")
@@ -94,7 +113,11 @@ async def delete_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 # ---------------------------------------------------------------------------
 
 @router.get("/{course_id}/chapters", response_model=list[ChapterSchema])
-async def list_chapters_for_course(course_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def list_chapters_for_course(
+    course_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(student_only),
+):
     if not await db.get(Course, course_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Course not found")
     result = await db.scalars(
