@@ -4,9 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dependencies import admin_only, student_only
-
 from db.session import get_db
+from dependencies import admin_only, enrolled_for_exercise, student_only
 from models.exercise import Exercise
 from models.exercise_block import ExerciseBlock
 from models.lecture import Lecture
@@ -56,7 +55,7 @@ async def create_exercise(
 async def get_exercise(
     exercise_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(student_only),
+    _: User = Depends(enrolled_for_exercise),
 ):
     exercise = await db.get(Exercise, exercise_id)
     if not exercise:
@@ -102,7 +101,7 @@ async def delete_exercise(
 async def list_blocks(
     exercise_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(student_only),
+    _: User = Depends(enrolled_for_exercise),
 ):
     if not await db.get(Exercise, exercise_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Exercise not found")
@@ -170,7 +169,7 @@ async def delete_block(
 async def list_test_cases(
     exercise_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(student_only),
+    _: User = Depends(enrolled_for_exercise),
 ):
     if not await db.get(Exercise, exercise_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Exercise not found")

@@ -5,8 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from dependencies import admin_only, student_only
 from db.session import get_db
+from dependencies import admin_only, enrolled_for_course, get_current_user, student_only
 from models.chapter import Chapter
 from models.course import Course
 from models.lecture import Lecture
@@ -29,6 +29,7 @@ async def list_courses(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(student_only),
 ):
+    """Any authenticated user can see the course catalogue."""
     result = await db.scalars(select(Course).offset(skip).limit(limit))
     return result.all()
 
@@ -50,7 +51,7 @@ async def create_course(
 async def get_course(
     course_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(student_only),
+    _: User = Depends(enrolled_for_course),
 ):
     course = await db.get(Course, course_id)
     if not course:
@@ -62,7 +63,7 @@ async def get_course(
 async def get_course_detail(
     course_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(student_only),
+    _: User = Depends(enrolled_for_course),
 ):
     result = await db.scalars(
         select(Course)
@@ -108,15 +109,11 @@ async def delete_course(
     await db.commit()
 
 
-# ---------------------------------------------------------------------------
-# Nested — chapters
-# ---------------------------------------------------------------------------
-
 @router.get("/{course_id}/chapters", response_model=list[ChapterSchema])
 async def list_chapters_for_course(
     course_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(student_only),
+    _: User = Depends(enrolled_for_course),
 ):
     if not await db.get(Course, course_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Course not found")

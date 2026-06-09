@@ -5,9 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from dependencies import admin_only, student_only
-
 from db.session import get_db
+from dependencies import admin_only, enrolled_for_chapter, student_only
 from models.chapter import Chapter
 from models.course import Course
 from models.lecture import Lecture
@@ -27,6 +26,7 @@ async def list_chapters(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(student_only),
 ):
+    """Flat list — no enrollment check since course_id is optional."""
     q = select(Chapter).order_by(Chapter.position)
     if course_id:
         q = q.where(Chapter.course_id == course_id)
@@ -53,7 +53,7 @@ async def create_chapter(
 async def get_chapter(
     chapter_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(student_only),
+    _: User = Depends(enrolled_for_chapter),
 ):
     chapter = await db.get(Chapter, chapter_id)
     if not chapter:
@@ -65,7 +65,7 @@ async def get_chapter(
 async def get_chapter_detail(
     chapter_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(student_only),
+    _: User = Depends(enrolled_for_chapter),
 ):
     result = await db.scalars(
         select(Chapter)
@@ -115,7 +115,7 @@ async def delete_chapter(
 async def list_lectures_for_chapter(
     chapter_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(student_only),
+    _: User = Depends(enrolled_for_chapter),
 ):
     if not await db.get(Chapter, chapter_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Chapter not found")

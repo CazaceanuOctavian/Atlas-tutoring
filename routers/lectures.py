@@ -5,9 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from dependencies import admin_only, student_only
-
 from db.session import get_db
+from dependencies import admin_only, enrolled_for_lecture, student_only
 from models.chapter import Chapter
 from models.exercise import Exercise
 from models.lecture import Lecture
@@ -56,7 +55,7 @@ async def create_lecture(
 async def get_lecture(
     lecture_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(student_only),
+    _: User = Depends(enrolled_for_lecture),
 ):
     lecture = await db.get(Lecture, lecture_id)
     if not lecture:
@@ -68,7 +67,7 @@ async def get_lecture(
 async def get_lecture_detail(
     lecture_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(student_only),
+    _: User = Depends(enrolled_for_lecture),
 ):
     result = await db.scalars(
         select(Lecture)
@@ -122,7 +121,7 @@ async def delete_lecture(
 async def list_blocks(
     lecture_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(student_only),
+    _: User = Depends(enrolled_for_lecture),
 ):
     if not await db.get(Lecture, lecture_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Lecture not found")
@@ -190,7 +189,7 @@ async def delete_block(
 async def list_exercises_for_lecture(
     lecture_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(student_only),
+    _: User = Depends(enrolled_for_lecture),
 ):
     if not await db.get(Lecture, lecture_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Lecture not found")
