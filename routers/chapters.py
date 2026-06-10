@@ -6,10 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from db.session import get_db
-
+from dependencies import admin_only, enrolled_for_chapter, student_only
 from models.chapter import Chapter
 from models.course import Course
 from models.lecture import Lecture
+from models.user import User
 from schemas.chapter import Chapter as ChapterSchema
 from schemas.chapter import ChapterCreate, ChapterDetail, ChapterUpdate
 from schemas.lecture import Lecture as LectureSchema
@@ -17,18 +18,15 @@ from schemas.lecture import Lecture as LectureSchema
 router = APIRouter(prefix="/chapters", tags=["chapters"])
 
 
-# ---------------------------------------------------------------------------
-# CRUD
-# ---------------------------------------------------------------------------
-
 @router.get("/", response_model=list[ChapterSchema])
 async def list_chapters(
     course_id: uuid.UUID | None = None,
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(student_only),
 ):
-    """List chapters, optionally filtered by course."""
+    """Flat list — no enrollment check since course_id is optional."""
     q = select(Chapter).order_by(Chapter.position)
     if course_id:
         q = q.where(Chapter.course_id == course_id)
@@ -37,7 +35,11 @@ async def list_chapters(
 
 
 @router.post("/", response_model=ChapterSchema, status_code=status.HTTP_201_CREATED)
-async def create_chapter(payload: ChapterCreate, db: AsyncSession = Depends(get_db)):
+async def create_chapter(
+    payload: ChapterCreate,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
+):
     if not await db.get(Course, payload.course_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Course not found")
     chapter = Chapter(**payload.model_dump())
@@ -48,7 +50,11 @@ async def create_chapter(payload: ChapterCreate, db: AsyncSession = Depends(get_
 
 
 @router.get("/{chapter_id}", response_model=ChapterSchema)
-async def get_chapter(chapter_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_chapter(
+    chapter_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(enrolled_for_chapter),
+):
     chapter = await db.get(Chapter, chapter_id)
     if not chapter:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Chapter not found")
@@ -56,8 +62,11 @@ async def get_chapter(chapter_id: uuid.UUID, db: AsyncSession = Depends(get_db))
 
 
 @router.get("/{chapter_id}/detail", response_model=ChapterDetail)
-async def get_chapter_detail(chapter_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
-    """Return the chapter with its lectures, blocks, and exercises pre-loaded."""
+async def get_chapter_detail(
+    chapter_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(enrolled_for_chapter),
+):
     result = await db.scalars(
         select(Chapter)
         .where(Chapter.id == chapter_id)
@@ -77,6 +86,7 @@ async def update_chapter(
     chapter_id: uuid.UUID,
     payload: ChapterUpdate,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
 ):
     chapter = await db.get(Chapter, chapter_id)
     if not chapter:
@@ -89,7 +99,11 @@ async def update_chapter(
 
 
 @router.delete("/{chapter_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_chapter(chapter_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def delete_chapter(
+    chapter_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
+):
     chapter = await db.get(Chapter, chapter_id)
     if not chapter:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Chapter not found")
@@ -97,14 +111,11 @@ async def delete_chapter(chapter_id: uuid.UUID, db: AsyncSession = Depends(get_d
     await db.commit()
 
 
-# ---------------------------------------------------------------------------
-# Nested — lectures
-# ---------------------------------------------------------------------------
-
 @router.get("/{chapter_id}/lectures", response_model=list[LectureSchema])
 async def list_lectures_for_chapter(
     chapter_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(enrolled_for_chapter),
 ):
     if not await db.get(Chapter, chapter_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Chapter not found")
