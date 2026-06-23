@@ -3,9 +3,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Import all models BEFORE creating tables so they register on Base.metadata
 import models  # noqa: F401
 
+from config import auth_settings
 from db.session import engine
 from models.base import Base
 from routers.auth import router as auth_router
@@ -19,9 +19,9 @@ from routers.submissions import router as submissions_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create tables (DEV ONLY — use Alembic in production)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
     yield
 
 
