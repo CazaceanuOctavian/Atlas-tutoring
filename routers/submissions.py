@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import auth_settings
 from db.session import get_db
 from dependencies import enrolled_for_exercise, get_current_user
 from models.exercise import Exercise
@@ -14,9 +15,6 @@ from schemas.submission import Submission as SubmissionSchema
 from schemas.submission import SubmissionCreate
 
 router = APIRouter(prefix="/exercises", tags=["submissions"])
-
-EXECUTOR_URL = "http://34.134.104.9:8001/run"
-
 
 @router.post(
     "/{exercise_id}/submissions",
@@ -63,7 +61,7 @@ async def submit_solution(
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                EXECUTOR_URL,
+                auth_settings.runner_url,
                 json={
                     "code": payload.code,
                     "language": payload.language.value,
