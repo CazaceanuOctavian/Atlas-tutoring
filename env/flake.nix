@@ -31,6 +31,8 @@
           psycopg2-binary
           asyncpg
           sqlalchemy
+
+          docker
         ]);
 
       in

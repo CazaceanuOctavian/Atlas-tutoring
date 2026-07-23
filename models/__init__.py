@@ -10,6 +10,7 @@ from models.lecture import Lecture
 from models.lecture_block import LectureBlock
 from models.test_case import TestCase
 from models.user import User
+from models.submission import Submission
 
 __all__ = [
     "User",
@@ -21,4 +22,5 @@ __all__ = [
     "Exercise",
     "ExerciseBlock",
     "TestCase",
+    "Submission",
 ]

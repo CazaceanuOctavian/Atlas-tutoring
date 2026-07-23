@@ -27,3 +27,6 @@ class User(Base):
     enrollments = relationship(
         "Enrollment", back_populates="user", cascade="all, delete-orphan"
     )
+    submissions = relationship(
+        "Submission", back_populates="student", cascade="all, delete-orphan"
+    )

@@ -22,4 +22,6 @@ pytest-asyncio
 
 psycopg2-binary
 asyncpg
-sqlalchemy
+sqlalchemiy
+
+docker
