@@ -23,6 +23,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=True)
     role          = Column(Enum(UserRole), nullable=False, default=UserRole.student)
     created_at    = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    google_sub = Column(String(255), unique=True, nullable=True, index=True)
 
     enrollments = relationship(
         "Enrollment", back_populates="user", cascade="all, delete-orphan"

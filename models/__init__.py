@@ -11,6 +11,8 @@ from models.lecture_block import LectureBlock
 from models.test_case import TestCase
 from models.user import User
 from models.submission import Submission
+from models.auth_handoff import AuthHandoff  
+
 
 __all__ = [
     "User",
@@ -23,4 +25,5 @@ __all__ = [
     "ExerciseBlock",
     "TestCase",
     "Submission",
+    "AuthHandoff"
 ]
