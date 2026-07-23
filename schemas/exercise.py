@@ -9,9 +9,10 @@ class _OrmBase(BaseModel):
 
 
 class ExerciseBase(_OrmBase):
-    lecture_id: uuid.UUID
-    title:      str
-    position:   int = 0
+    lecture_id:    uuid.UUID
+    title:         str
+    position:      int = 0
+    code_template: Optional[str] = None
 
 
 class ExerciseCreate(ExerciseBase):
@@ -19,8 +20,9 @@ class ExerciseCreate(ExerciseBase):
 
 
 class ExerciseUpdate(_OrmBase):
-    title:    Optional[str] = None
-    position: Optional[int] = None
+    title:         Optional[str] = None
+    position:      Optional[int] = None
+    code_template: Optional[str] = None
 
 
 class Exercise(ExerciseBase):
