@@ -26,7 +26,11 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 SCOPES = "openid email profile"
 STATE_COOKIE = "oauth_state"
-HANDOFF_TTL = timedelta(seconds=120)
+# Must match the PUBLIC path of the callback route. The router is mounted
+# under /api/v1, so the browser sees /api/v1/auth/google/callback — a cookie
+# scoped to /auth would not be sent on that request.
+OAUTH_COOKIE_PATH = "/api/v1/auth"
+HANDOFF_TTL = timedelta(seconds=60)
 
 
 def _frontend(path: str, **params: str) -> str:
@@ -63,7 +67,7 @@ async def google_login(next: str = "/"):
         httponly=True,
         secure=True,
         samesite="lax",
-        path="/auth",
+        path=OAUTH_COOKIE_PATH,
     )
     return response
 
@@ -172,7 +176,7 @@ async def google_callback(
     response = RedirectResponse(
         _frontend("/auth/callback", code=handoff, next=next_path)
     )
-    response.delete_cookie(STATE_COOKIE, path="/auth")
+    response.delete_cookie(STATE_COOKIE, path=OAUTH_COOKIE_PATH)
     return response
 
 
