@@ -248,3 +248,32 @@ async def logout():
     extended to maintain a server-side denylist if needed.
     """
     return JSONResponse({"message": "Successfully logged out. Discard your token."})
+
+
+# ---------------------------------------------------------------------------
+# DEBUG ONLY — mint a JWT for a user without the OAuth round-trip.
+# 404s outside development. Do NOT enable in production.
+# ---------------------------------------------------------------------------
+
+@router.get("/debug/token", include_in_schema=False)
+async def debug_token(
+    email: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    # Fail safe: any value other than an explicit "development" => not found.
+    if getattr(auth_settings, "environment", "production") != "development":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    stmt = select(User).where(User.email == email) if email else select(User).limit(1)
+    user = (await db.scalars(stmt)).first()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    token = create_access_token(user_id=user.id, email=user.email, role=user.role)
+    return JSONResponse(
+        {
+            "access_token": token,
+            "token_type": "bearer",
+            "user": {"id": str(user.id), "email": user.email, "role": user.role.value},
+        }
+    )
