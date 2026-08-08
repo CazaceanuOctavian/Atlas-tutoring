@@ -250,30 +250,118 @@ async def logout():
     return JSONResponse({"message": "Successfully logged out. Discard your token."})
 
 
+# ===========================================================================
+# LEGACY DEBUG ENDPOINTS  (userinfo-based flow, JWT returned directly in JSON)
 # ---------------------------------------------------------------------------
-# DEBUG ONLY — mint a JWT for a user without the OAuth round-trip.
-# 404s outside development. Do NOT enable in production.
-# ---------------------------------------------------------------------------
+# Faithful ports of the original endpoints, kept only for debugging/comparison
+# against the handoff-code flow above. Mounted under /auth/debug/* with renamed
+# handlers so they don't collide with the primary routes. Nothing above this
+# line is affected.
+# ===========================================================================
 
-@router.get("/debug/token", include_in_schema=False)
-async def debug_token(
-    email: str | None = None,
+GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+
+
+@router.get("/debug/google/login")
+async def google_login_debug(request: Request):
+    """[DEBUG] Original flow: redirect straight to Google's consent screen."""
+    # Send Google back to THIS debug callback so the two flows stay independent.
+    # Register this exact URL as an authorised redirect URI in Google Cloud.
+    redirect_uri = str(request.url_for("google_callback_debug"))
+    params = {
+        "client_id": auth_settings.google_client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": SCOPES,
+        "access_type": "offline",   # request a refresh token
+        "prompt": "select_account",
+    }
+    return RedirectResponse(url=f"{GOOGLE_AUTH_URL}?{urlencode(params)}")
+
+
+@router.get("/debug/google/callback")
+async def google_callback_debug(
+    request: Request,
+    code: str,
     db: AsyncSession = Depends(get_db),
 ):
-    # Fail safe: any value other than an explicit "development" => not found.
-    if getattr(auth_settings, "environment", "production") != "development":
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    """[DEBUG] Original flow: exchange code, hit userinfo, upsert, return JWT in JSON."""
+    redirect_uri = str(request.url_for("google_callback_debug"))
 
-    stmt = select(User).where(User.email == email) if email else select(User).limit(1)
-    user = (await db.scalars(stmt)).first()
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    # --- Exchange code for tokens ---
+    async with httpx.AsyncClient() as client:
+        token_response = await client.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": auth_settings.google_client_id,
+                "client_secret": auth_settings.google_client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+        )
 
-    token = create_access_token(user_id=user.id, email=user.email, role=user.role)
-    return JSONResponse(
-        {
-            "access_token": token,
-            "token_type": "bearer",
-            "user": {"id": str(user.id), "email": user.email, "role": user.role.value},
-        }
-    )
+    if token_response.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to exchange authorisation code with Google",
+        )
+
+    access_token = token_response.json().get("access_token")
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No access token returned by Google",
+        )
+
+    # --- Fetch user profile from Google ---
+    async with httpx.AsyncClient() as client:
+        userinfo_response = await client.get(
+            GOOGLE_USERINFO_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    if userinfo_response.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to fetch user info from Google",
+        )
+
+    google_user = userinfo_response.json()
+    email = google_user.get("email")
+    name = google_user.get("name") or email
+
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Google account did not return an email address",
+        )
+
+    # --- Upsert user ---
+    user = (await db.scalars(select(User).where(User.email == email))).first()
+    if not user:
+        user = User(name=name, email=email, password_hash="")   # no password for OAuth users
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+
+    # --- Issue JWT ---
+    jwt_token = create_access_token(user_id=user.id, email=user.email, role=user.role)
+
+    return JSONResponse({
+        "access_token": jwt_token,
+        "token_type": "bearer",
+        "user": {
+            "id": str(user.id),
+            "name": user.name,
+            "email": user.email,
+            "role": user.role.value,
+            "created_at": user.created_at.isoformat(),
+        },
+    })
+
+
+@router.post("/debug/logout")
+async def logout_debug():
+    """[DEBUG] Identical to /auth/logout — stateless client-side logout."""
+    return JSONResponse({"message": "Successfully logged out. Discard your token."})
