@@ -6,6 +6,7 @@ class AuthSettings(BaseSettings):
     google_client_secret: str
     app_base_url:         str 
     frontend_url:         str
+    
 
     # JWT
     jwt_secret_key:       str 
