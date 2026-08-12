@@ -4,12 +4,14 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from config import auth_settings
 from db.session import get_db
 from dependencies import enrolled_for_exercise, get_current_user
 from models.exercise import Exercise
 from models.submission import Submission, SubmissionStatus
+from models.submission_test_result import SubmissionTestResult
 from models.test_case import TestCase
 from models.user import User, UserRole
 from schemas.submission import Submission as SubmissionSchema
@@ -20,31 +22,28 @@ router = APIRouter(prefix="/exercises", tags=["submissions"])
 EXECUTOR_BASE_URL = auth_settings.runner_url.rsplit("/run", 1)[0]
 
 
-async def _run_remote_batch(
+async def _run_single(
     code: str,
     language: str,
-    stdin_list: list[str],
+    stdin: str,
     timeout: int = 10,
-) -> list[dict]:
-    """
-    Call the remote executor's /run-batch endpoint.
-    The remote runner writes + compiles the code ONCE, then executes it
-    once per stdin entry against the SAME container, and only restarts
-    the container after the entire batch finishes.
-    """
-    request_timeout = timeout * max(len(stdin_list), 1) + 30.0
-    async with httpx.AsyncClient(timeout=request_timeout) as client:
+) -> dict:
+    async with httpx.AsyncClient(timeout=float(timeout + 30)) as client:
         response = await client.post(
             f"{EXECUTOR_BASE_URL}/run-batch",
             json={
                 "code": code,
                 "language": language,
-                "stdin_list": stdin_list,
+                "stdin_list": [stdin],
                 "timeout": timeout,
             },
         )
     response.raise_for_status()
-    return response.json()["results"]
+    return response.json()["results"][0]
+
+
+def _with_test_results(q):
+    return q.options(selectinload(Submission.test_results))
 
 
 @router.post(
@@ -59,19 +58,6 @@ async def submit_solution(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(enrolled_for_exercise),
 ):
-    """
-    Submit a solution for an exercise.
-
-    Flow:
-    1. Save submission as QUEUED.
-    2. Fetch all test cases for the exercise.
-    3. Send ONE batch request to the remote executor — code is written
-       and compiled (C++) exactly once, then run once per test case's
-       `input` (as stdin), all against the SAME container. The container
-       is only restarted after the whole submission finishes.
-    4. Compare each run's stdout against the matching expected_output.
-    5. Store the aggregate result + passed_testcases percentage.
-    """
     exercise = await db.get(Exercise, exercise_id)
     if not exercise:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercise not found")
@@ -97,19 +83,15 @@ async def submit_solution(
 
     try:
         if not test_cases:
-            # No test cases — single run, no stdin, no grading
-            run_results = await _run_remote_batch(
+            run_result = await _run_single(
                 code=payload.code,
                 language=payload.language.value,
-                stdin_list=[""],
+                stdin="",
             )
-            run_result = run_results[0]
-
-            submission.stdout            = run_result.get("stdout", "")
-            submission.stderr            = run_result.get("stderr", "")
-            submission.exit_code         = run_result.get("exit_code")
-            submission.timed_out         = run_result.get("timed_out", False)
-            submission.passed_testcases  = None
+            submission.stdout    = run_result.get("stdout", "")
+            submission.stderr    = run_result.get("stderr", "")
+            submission.exit_code = run_result.get("exit_code")
+            submission.timed_out = run_result.get("timed_out", False)
 
             if submission.timed_out:
                 submission.status = SubmissionStatus.timeout
@@ -119,47 +101,59 @@ async def submit_solution(
                 submission.status = SubmissionStatus.failed
 
         else:
-            stdin_list = [tc.input or "" for tc in test_cases]
-            run_results = await _run_remote_batch(
-                code=payload.code,
-                language=payload.language.value,
-                stdin_list=stdin_list,
-            )
+            passed_count = 0
+            final_status = SubmissionStatus.passed
+            last_run: dict | None = None
 
-            passed_count  = 0
-            any_timed_out = False
-            any_error     = False
-            last = run_results[-1]   # report the last run's raw output on the submission
+            for index, tc in enumerate(test_cases):
+                run_result = await _run_single(
+                    code=payload.code,
+                    language=payload.language.value,
+                    stdin=tc.input or "",
+                )
+                last_run = run_result
 
-            for tc, run_result in zip(test_cases, run_results):
-                stdout    = run_result.get("stdout", "") or ""
-                exit_code = run_result.get("exit_code")
-                timed_out = run_result.get("timed_out", False)
+                timed_out  = run_result.get("timed_out", False)
+                exit_code  = run_result.get("exit_code")
+                stdout     = run_result.get("stdout", "") or ""
+                stderr     = run_result.get("stderr", "") or ""
+                actual     = stdout.strip()
+                expected   = (tc.expected_output or "").strip()
 
-                if timed_out:
-                    any_timed_out = True
-                    continue
-                if str(exit_code) != "0":
-                    any_error = True
-                    continue
-                if stdout.strip() == (tc.expected_output or "").strip():
-                    passed_count += 1
+                ok = (not timed_out) and str(exit_code) == "0" and actual == expected
+                passed_count += int(ok)
+
+                db.add(SubmissionTestResult(
+                    submission_id=submission.id,
+                    test_case_id=tc.id,
+                    order_index=index,
+                    passed=ok,
+                    actual_output=stdout,
+                    stderr=stderr,
+                    exit_code=str(exit_code) if exit_code is not None else None,
+                    timed_out=timed_out,
+                ))
+
+                if not ok:
+                    if timed_out:
+                        final_status = SubmissionStatus.timeout
+                    elif str(exit_code) != "0":
+                        final_status = SubmissionStatus.error
+                    else:
+                        final_status = SubmissionStatus.failed
+                    break  # stop — no further executions
 
             total = len(test_cases)
-            submission.passed_testcases = round((passed_count / total) * 100, 2)
-            submission.stdout    = last.get("stdout", "")
-            submission.stderr    = last.get("stderr", "")
-            submission.exit_code = last.get("exit_code")
-            submission.timed_out = last.get("timed_out", False)
 
-            if any_timed_out:
-                submission.status = SubmissionStatus.timeout
-            elif passed_count == total:
-                submission.status = SubmissionStatus.passed
-            elif any_error:
-                submission.status = SubmissionStatus.error
-            else:
-                submission.status = SubmissionStatus.failed
+            submission.passed_count = passed_count
+            submission.total_count  = total
+            submission.status       = SubmissionStatus.passed if passed_count == total else final_status
+
+            if last_run:
+                submission.stdout    = last_run.get("stdout", "")
+                submission.stderr    = last_run.get("stderr", "")
+                submission.exit_code = last_run.get("exit_code")
+                submission.timed_out = last_run.get("timed_out", False)
 
     except httpx.TimeoutException:
         submission.status    = SubmissionStatus.timeout
@@ -168,11 +162,16 @@ async def submit_solution(
 
     except Exception as exc:
         submission.status = SubmissionStatus.error
-        submission.stderr  = f"Execution service error: {exc}"
+        submission.stderr = f"Execution service error: {exc}"
 
     await db.commit()
-    await db.refresh(submission)
-    return submission
+
+    refreshed = await db.scalar(
+        _with_test_results(
+            select(Submission).where(Submission.id == submission.id)
+        )
+    )
+    return refreshed
 
 
 @router.get(
@@ -184,11 +183,6 @@ async def list_submissions(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(enrolled_for_exercise),
 ):
-    """
-    List submissions for an exercise.
-    - Students see only their own submissions.
-    - Admins see all submissions for the exercise.
-    """
     if not await db.get(Exercise, exercise_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercise not found")
 
@@ -197,7 +191,7 @@ async def list_submissions(
     if current_user.role == UserRole.student:
         q = q.where(Submission.student_id == current_user.id)
 
-    q = q.order_by(Submission.created_at.desc())
+    q = _with_test_results(q).order_by(Submission.created_at.desc())
     result = await db.scalars(q)
     return result.all()
 
@@ -212,11 +206,11 @@ async def get_submission(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(enrolled_for_exercise),
 ):
-    """
-    Get a specific submission by ID.
-    Students can only retrieve their own submissions.
-    """
-    submission = await db.get(Submission, submission_id)
+    submission = await db.scalar(
+        _with_test_results(
+            select(Submission).where(Submission.id == submission_id)
+        )
+    )
 
     if not submission or submission.exercise_id != exercise_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")

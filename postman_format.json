@@ -1,0 +1,1580 @@
+{
+  "info": {
+    "name": "Tutoring Platform API",
+    "description": "# Atlas \u2014 Tutoring Platform API\n\nBackend for a coding-education platform: courses \u2192 chapters \u2192 lectures \u2192 exercises, with Google OAuth2 login, role-based access (admin/student), enrollment-gated content, and remote code execution with test-case grading for exercise submissions.\n\n## Getting started\n1. Set `base_url` (defaults to `http://localhost:8000/api/v1`)\n2. Open the **Google Login** URL in a browser and sign in\n3. Copy the `code` from the redirect into `google_code`, then run **Google Callback** \u2014 your `access_token` is saved automatically\n4. Every other request authenticates using `{{access_token}}` automatically\n\n## Roles\n- **admin** \u2014 full CRUD on all content (courses, chapters, lectures, exercises, blocks, test cases)\n- **student** \u2014 read-only, and only for courses they're enrolled in. Must `POST /enrollments` before accessing course content.\n\n## Code execution & grading\nStudent submissions are executed remotely on an isolated Docker container. If an exercise has test cases, the submitted code is run **one test case at a time** (sequentially), feeding each test case's `input` as stdin. Execution **stops immediately on the first failure** \u2014 no further test cases are run after a wrong answer, crash, or timeout. Each submission returns `passed_count` and `total_count` as integers (e.g. `17` and `36`, display as `\"17/36\"`) alongside a `test_results` array with the per-test-case breakdown. `passed_count`/`total_count` are `null` if the exercise has no test cases.\n\n## Folder guide\n| Folder | Covers |\n|---|---|\n| Auth | Google OAuth2 login/logout, JWT issuance |\n| Courses | Top-level content containers |\n| Enrollments | Connects students to courses \u2014 required before content access |\n| Chapters | Ordered groups of lectures within a course |\n| Lectures | Markdown content blocks + exercises within a chapter |\n| Exercises | Coding problems with a starter `code_template` and test cases used for grading |\n| Submissions | Student code submissions, executed remotely in Docker, graded against test cases |\n\nEach folder has its own detailed documentation with multiple worked examples \u2014 click into a folder and view its description.\n",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000/api/v1"
+    },
+    {
+      "key": "course_id",
+      "value": "00000000-0000-0000-0000-000000000001"
+    },
+    {
+      "key": "chapter_id",
+      "value": "00000000-0000-0000-0000-000000000002"
+    },
+    {
+      "key": "lecture_id",
+      "value": "00000000-0000-0000-0000-000000000003"
+    },
+    {
+      "key": "exercise_id",
+      "value": "00000000-0000-0000-0000-000000000004"
+    },
+    {
+      "key": "block_id",
+      "value": "00000000-0000-0000-0000-000000000005"
+    },
+    {
+      "key": "test_case_id",
+      "value": "00000000-0000-0000-0000-000000000006"
+    },
+    {
+      "key": "access_token",
+      "value": ""
+    },
+    {
+      "key": "google_code",
+      "value": ""
+    },
+    {
+      "key": "user_id",
+      "value": "00000000-0000-0000-0000-000000000007"
+    },
+    {
+      "key": "enrollment_id",
+      "value": "00000000-0000-0000-0000-000000000008"
+    },
+    {
+      "key": "submission_id",
+      "value": "00000000-0000-0000-0000-000000000009"
+    },
+    {
+      "key": "debug_email",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Google Login (open in browser)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/google/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "google",
+                "login"
+              ]
+            },
+            "description": "Opens Google's consent screen. Open this URL directly in a browser \u2014 Postman cannot follow the redirect to Google."
+          }
+        },
+        {
+          "name": "Google Callback (redirect target)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/google/callback?code={{google_code}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "google",
+                "callback"
+              ],
+              "query": [
+                {
+                  "key": "code",
+                  "value": "{{google_code}}",
+                  "description": "Authorisation code returned by Google \u2014 set this after completing the login flow in your browser"
+                }
+              ]
+            },
+            "description": "Google redirects here after login. Returns a JWT access_token and user details. You can also call this manually with the code from your browser's address bar."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.access_token) {",
+                  "    pm.collectionVariables.set('access_token', res.access_token);",
+                  "    console.log('access_token saved:', res.access_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Debug Token (dev only \u2014 skip OAuth)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/auth/debug/token?email={{debug_email}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "debug",
+                "token"
+              ],
+              "query": [
+                {
+                  "key": "email",
+                  "value": "{{debug_email}}",
+                  "description": "Email of the user to mint a token for. Leave the value blank (or disable this param) to grab the first user in the DB."
+                }
+              ]
+            },
+            "description": "DEV ONLY. Mints a JWT for a user without the Google OAuth round-trip so you can authenticate directly in Postman. The endpoint 404s outside the development environment. The returned access_token is auto-saved to {{access_token}} by the test script below \u2014 run this once and every other request is authenticated."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.access_token) {",
+                  "    pm.collectionVariables.set('access_token', res.access_token);",
+                  "    console.log('access_token saved:', res.access_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "Signals logout. Discard the JWT on the client side."
+          }
+        }
+      ],
+      "description": "## Auth \u2014 Google OAuth2 Login\n\nHandles sign-in via Google and issues a JWT used to authenticate every other request in this collection.\n\n**Flow:**\n1. Open `Google Login` in a browser (not Postman \u2014 Google's consent screen can't be completed inside Postman)\n2. After consenting, Google redirects to the callback URL with a `code` query param\n3. Copy that `code` into the `google_code` collection variable\n4. Run `Google Callback` in Postman \u2014 this exchanges the code for a JWT and upserts the user in the database\n5. The JWT is auto-saved to `{{access_token}}` via a test script \u2014 every other request in this collection uses it automatically\n\n---\n\n### Example 1 \u2014 First-time login (new user)\n**Request:** `GET /auth/google/callback?code=4/0Adk...`\n**Response `200`:**\n```json\n{\n  \"access_token\": \"eyJhbGciOiJIUzI1NiIs...\",\n  \"token_type\": \"bearer\",\n  \"user\": {\n    \"id\": \"91deb5e7-464a-471f-9fb7-f4589ce0f35d\",\n    \"name\": \"Octavian Cazan\",\n    \"email\": \"o.cazatavian@gmail.com\",\n    \"role\": \"student\",\n    \"created_at\": \"2026-06-20T10:15:00Z\"\n  }\n}\n```\nA new row is created in `users` with `role = student` by default.\n\n### Example 2 \u2014 Returning user\nSame request, same flow \u2014 but instead of creating a new user, the existing row is matched by email and a fresh JWT is issued. The `user.id` stays identical across logins.\n\n### Example 3 \u2014 Logout\n**Request:** `POST /auth/logout` (with `Authorization: Bearer {{access_token}}`)\n**Response `200`:**\n```json\n{ \"message\": \"Successfully logged out. Discard your token.\" }\n```\nJWTs are stateless, so this just signals intent \u2014 the actual logout is the client discarding `{{access_token}}`.\n"
+    },
+    {
+      "name": "Courses",
+      "item": [
+        {
+          "name": "List Courses",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/courses?skip=0&limit=100",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "courses"
+              ],
+              "query": [
+                {
+                  "key": "skip",
+                  "value": "0"
+                },
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Course",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Introduction to Python\",\n  \"description\": \"A beginner-friendly Python course.\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/courses",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "courses"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Course",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/courses/{{course_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "courses",
+                "{{course_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Course Detail (full tree)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/courses/{{course_id}}/detail",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "courses",
+                "{{course_id}}",
+                "detail"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Course",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Advanced Python\",\n  \"description\": \"Updated description.\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/courses/{{course_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "courses",
+                "{{course_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Course",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/courses/{{course_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "courses",
+                "{{course_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Chapters for Course",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/courses/{{course_id}}/chapters",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "courses",
+                "{{course_id}}",
+                "chapters"
+              ]
+            }
+          }
+        }
+      ],
+      "description": "## Courses\n\nTop-level content container. A course holds chapters, which hold lectures, which hold blocks and exercises.\n\n**Access control:**\n| Action | Admin | Enrolled student | Unenrolled student |\n|---|---|---|---|\n| Browse catalogue (`GET /courses`) | \u2713 | \u2713 | \u2713 |\n| View a specific course (`GET /courses/{id}`) | \u2713 | \u2713 | \u2717 403 |\n| Create / update / delete | \u2713 | \u2717 403 | \u2717 403 |\n\nThe catalogue list is open to any authenticated user so students can browse before enrolling. Everything keyed to a specific `course_id` requires enrollment.\n\n---\n\n### Example 1 \u2014 Admin creates a course\n**Request:** `POST /courses`\n```json\n{ \"title\": \"Introduction to Python\", \"description\": \"A beginner-friendly Python course.\" }\n```\n**Response `201`:**\n```json\n{\n  \"id\": \"018732f6-ae85-4cfc-ba46-e3e78a4291d8\",\n  \"title\": \"Introduction to Python\",\n  \"description\": \"A beginner-friendly Python course.\",\n  \"created_at\": \"2026-06-20T10:00:00Z\"\n}\n```\n\n### Example 2 \u2014 Student browses the catalogue, then tries to open one\n`GET /courses` \u2192 returns all courses regardless of enrollment.\n`GET /courses/018732f6-.../detail` on a course the student is **not** enrolled in:\n**Response `403`:**\n```json\n{ \"detail\": \"You are not enrolled in this course\" }\n```\nThe student must call `POST /enrollments` first (see the Enrollments folder).\n\n### Example 3 \u2014 Get full course tree\n**Request:** `GET /courses/{{course_id}}/detail`\nReturns the course with `chapters \u2192 lectures \u2192 blocks/exercises` fully nested in one call \u2014 useful for rendering an entire course page without N+1 requests.\n"
+    },
+    {
+      "name": "Enrollments",
+      "item": [
+        {
+          "name": "List Enrollments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/enrollments",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "enrollments"
+              ]
+            },
+            "description": "Admins see all enrollments. Students see only their own."
+          }
+        },
+        {
+          "name": "My Enrollments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/enrollments/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "enrollments",
+                "me"
+              ]
+            },
+            "description": "Returns the current student's enrollments."
+          }
+        },
+        {
+          "name": "Enroll in Course",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{user_id}}\",\n  \"course_id\": \"{{course_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/enrollments",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "enrollments"
+              ]
+            },
+            "description": "Admins can enroll any user. Students can only enroll themselves (user_id must match their own id)."
+          }
+        },
+        {
+          "name": "Unenroll from Course",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/enrollments/{{enrollment_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "enrollments",
+                "{{enrollment_id}}"
+              ]
+            },
+            "description": "Admins can unenroll anyone. Students can only unenroll themselves."
+          }
+        }
+      ],
+      "description": "## Enrollments\n\nConnects students to courses. Enrollment is the gate that the `enrolled_for_*` dependencies check before letting a student see chapter/lecture/exercise content.\n\n**Rules:**\n- Admins can enroll or unenroll **any** user in **any** course.\n- Students can only enroll/unenroll **themselves** (`user_id` in the body must match their own JWT `sub`).\n- Re-enrolling in the same course returns `409 Conflict` (the `UNIQUE(user_id, course_id)` DB constraint).\n\n---\n\n### Example 1 \u2014 Student self-enrolls\n**Request:** `POST /enrollments`\n```json\n{ \"user_id\": \"{{user_id}}\", \"course_id\": \"{{course_id}}\" }\n```\n**Response `201`:**\n```json\n{\n  \"id\": \"a1b2c3d4-...\",\n  \"user_id\": \"91deb5e7-464a-471f-9fb7-f4589ce0f35d\",\n  \"course_id\": \"018732f6-ae85-4cfc-ba46-e3e78a4291d8\",\n  \"enrolled_at\": \"2026-06-23T09:00:00Z\"\n}\n```\n\n### Example 2 \u2014 Student tries to enroll someone else\n**Request:** `POST /enrollments` with a `user_id` that isn't their own.\n**Response `403`:**\n```json\n{ \"detail\": \"Students can only enroll themselves\" }\n```\n\n### Example 3 \u2014 Duplicate enrollment\nCalling the same `POST /enrollments` twice with identical `user_id`/`course_id`:\n**Response `409`:**\n```json\n{ \"detail\": \"User is already enrolled in this course\" }\n```\n\n### Example 4 \u2014 Checking your own enrollments\n**Request:** `GET /enrollments/me`\n**Response `200`:**\n```json\n[\n  { \"id\": \"a1b2c3d4-...\", \"user_id\": \"91deb5e7-...\", \"course_id\": \"018732f6-...\", \"enrolled_at\": \"2026-06-23T09:00:00Z\" }\n]\n```\n"
+    },
+    {
+      "name": "Chapters",
+      "item": [
+        {
+          "name": "List Chapters",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/chapters?skip=0&limit=100",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "chapters"
+              ],
+              "query": [
+                {
+                  "key": "course_id",
+                  "value": "{{course_id}}",
+                  "disabled": true
+                },
+                {
+                  "key": "skip",
+                  "value": "0"
+                },
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Chapter",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"course_id\": \"{{course_id}}\",\n  \"title\": \"Getting Started\",\n  \"position\": 0\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/chapters",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "chapters"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Chapter",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/chapters/{{chapter_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "chapters",
+                "{{chapter_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Chapter Detail (with lectures)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/chapters/{{chapter_id}}/detail",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "chapters",
+                "{{chapter_id}}",
+                "detail"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Chapter",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Chapter Title\",\n  \"position\": 1\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/chapters/{{chapter_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "chapters",
+                "{{chapter_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Chapter",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/chapters/{{chapter_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "chapters",
+                "{{chapter_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Lectures for Chapter",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/chapters/{{chapter_id}}/lectures",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "chapters",
+                "{{chapter_id}}",
+                "lectures"
+              ]
+            }
+          }
+        }
+      ],
+      "description": "## Chapters\n\nSit inside a course and hold an ordered sequence of lectures (`position` controls order).\n\n**Access control** mirrors Courses \u2014 `admin_only` for writes, enrollment-checked for reads on a specific `chapter_id` (resolved internally via `chapter.course_id`).\n\n---\n\n### Example 1 \u2014 Admin adds a chapter to a course\n**Request:** `POST /chapters`\n```json\n{ \"course_id\": \"{{course_id}}\", \"title\": \"Getting Started\", \"position\": 0 }\n```\n**Response `201`:**\n```json\n{\n  \"id\": \"b2c3d4e5-...\",\n  \"course_id\": \"018732f6-ae85-4cfc-ba46-e3e78a4291d8\",\n  \"title\": \"Getting Started\",\n  \"position\": 0\n}\n```\n\n### Example 2 \u2014 Reordering chapters\n**Request:** `PATCH /chapters/{{chapter_id}}`\n```json\n{ \"position\": 2 }\n```\nOnly the fields you send are updated \u2014 `title` is left untouched (`exclude_unset=True` on the server).\n\n### Example 3 \u2014 Enrolled student views a chapter with its lectures\n**Request:** `GET /chapters/{{chapter_id}}/detail`\n**Response `200`:**\n```json\n{\n  \"id\": \"b2c3d4e5-...\",\n  \"course_id\": \"018732f6-...\",\n  \"title\": \"Getting Started\",\n  \"position\": 0,\n  \"lectures\": [\n    { \"id\": \"c3d4e5f6-...\", \"title\": \"Variables and Data Types\", \"position\": 0, \"blocks\": [], \"exercises\": [] }\n  ]\n}\n```\n\n### Example 4 \u2014 Listing chapters filtered by course\n**Request:** `GET /chapters?course_id={{course_id}}`\nTick the disabled `course_id` query param checkbox in this request to activate the filter.\n"
+    },
+    {
+      "name": "Lectures",
+      "item": [
+        {
+          "name": "List Lectures",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/lectures?skip=0&limit=100",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "lectures"
+              ],
+              "query": [
+                {
+                  "key": "chapter_id",
+                  "value": "{{chapter_id}}",
+                  "disabled": true
+                },
+                {
+                  "key": "skip",
+                  "value": "0"
+                },
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Lecture",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chapter_id\": \"{{chapter_id}}\",\n  \"title\": \"Variables and Data Types\",\n  \"position\": 0\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/lectures",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "lectures"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Lecture",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/lectures/{{lecture_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "lectures",
+                "{{lecture_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Lecture Detail (blocks + exercises)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/lectures/{{lecture_id}}/detail",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "lectures",
+                "{{lecture_id}}",
+                "detail"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Lecture",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Lecture Title\",\n  \"position\": 1\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/lectures/{{lecture_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "lectures",
+                "{{lecture_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Lecture",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/lectures/{{lecture_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "lectures",
+                "{{lecture_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Blocks for Lecture",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/lectures/{{lecture_id}}/blocks",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "lectures",
+                "{{lecture_id}}",
+                "blocks"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Block for Lecture",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lecture_id\": \"{{lecture_id}}\",\n  \"markdown\": \"## Introduction\\n\\nWelcome to this lecture.\",\n  \"position\": 0\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/lectures/{{lecture_id}}/blocks",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "lectures",
+                "{{lecture_id}}",
+                "blocks"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Block for Lecture",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"markdown\": \"## Updated Content\\n\\nThis block has been updated.\",\n  \"position\": 1\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/lectures/{{lecture_id}}/blocks/{{block_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "lectures",
+                "{{lecture_id}}",
+                "blocks",
+                "{{block_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Block for Lecture",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/lectures/{{lecture_id}}/blocks/{{block_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "lectures",
+                "{{lecture_id}}",
+                "blocks",
+                "{{block_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Exercises for Lecture",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/lectures/{{lecture_id}}/exercises",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "lectures",
+                "{{lecture_id}}",
+                "exercises"
+              ]
+            }
+          }
+        }
+      ],
+      "description": "## Lectures\n\nBelong to a chapter; hold ordered **blocks** (markdown content) and **exercises**.\n\n**Access control:** writes are `admin_only`; reads on a specific `lecture_id` walk up to the parent chapter's course to check enrollment.\n\n---\n\n### Example 1 \u2014 Admin creates a lecture\n**Request:** `POST /lectures`\n```json\n{ \"chapter_id\": \"{{chapter_id}}\", \"title\": \"Variables and Data Types\", \"position\": 0 }\n```\n**Response `201`:**\n```json\n{ \"id\": \"c3d4e5f6-...\", \"chapter_id\": \"b2c3d4e5-...\", \"title\": \"Variables and Data Types\", \"position\": 0 }\n```\n\n### Example 2 \u2014 Adding markdown content blocks\n**Request:** `POST /lectures/{{lecture_id}}/blocks`\n```json\n{ \"lecture_id\": \"{{lecture_id}}\", \"markdown\": \"## Introduction\\n\\nWelcome to this lecture.\", \"position\": 0 }\n```\nBlocks render in order by `position` \u2014 add multiple blocks with increasing `position` values to build a lecture page.\n\n### Example 3 \u2014 Full lecture detail (blocks + exercises in one call)\n**Request:** `GET /lectures/{{lecture_id}}/detail`\n**Response `200`:**\n```json\n{\n  \"id\": \"c3d4e5f6-...\",\n  \"title\": \"Variables and Data Types\",\n  \"blocks\": [{ \"id\": \"...\", \"markdown\": \"## Introduction...\", \"position\": 0 }],\n  \"exercises\": [{ \"id\": \"...\", \"title\": \"FizzBuzz\", \"position\": 0, \"code_template\": \"...\" }]\n}\n```\n\n### Example 4 \u2014 Unenrolled student is blocked\n**Request:** `GET /lectures/{{lecture_id}}` for a lecture in a course the student hasn't joined.\n**Response `403`:** `{ \"detail\": \"You are not enrolled in this course\" }`\n"
+    },
+    {
+      "name": "Exercises",
+      "item": [
+        {
+          "name": "List Exercises",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/exercises?skip=0&limit=100",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises"
+              ],
+              "query": [
+                {
+                  "key": "lecture_id",
+                  "value": "{{lecture_id}}",
+                  "disabled": true
+                },
+                {
+                  "key": "skip",
+                  "value": "0"
+                },
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Exercise",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lecture_id\": \"{{lecture_id}}\",\n  \"title\": \"FizzBuzz\",\n  \"position\": 0,\n  \"code_template\": \"#include <iostream>\\n\\nint main() {\\n    // your code here\\n    return 0;\\n}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/exercises",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Exercise",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Exercise",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Updated Exercise Title\",\n  \"position\": 2,\n  \"code_template\": \"# Write your Python solution here\\n\\ndef solution():\\n    pass\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Exercise",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Blocks for Exercise",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}/blocks",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}",
+                "blocks"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Block for Exercise",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exercise_id\": \"{{exercise_id}}\",\n  \"markdown\": \"Write a function that prints FizzBuzz for numbers 1 to 100.\",\n  \"position\": 0\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}/blocks",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}",
+                "blocks"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Block for Exercise",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"markdown\": \"Updated exercise block content.\",\n  \"position\": 1\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}/blocks/{{block_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}",
+                "blocks",
+                "{{block_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Block for Exercise",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}/blocks/{{block_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}",
+                "blocks",
+                "{{block_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Test Cases",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}/test-cases",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}",
+                "test-cases"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Test Case",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exercise_id\": \"{{exercise_id}}\",\n  \"input\": \"15\",\n  \"expected_output\": \"FizzBuzz\",\n  \"description\": \"Divisible by both 3 and 5\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}/test-cases",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}",
+                "test-cases"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Test Case",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"input\": \"9\",\n  \"expected_output\": \"Fizz\",\n  \"description\": \"Divisible by 3 only\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}/test-cases/{{test_case_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}",
+                "test-cases",
+                "{{test_case_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Test Case",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}/test-cases/{{test_case_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}",
+                "test-cases",
+                "{{test_case_id}}"
+              ]
+            }
+          }
+        }
+      ],
+      "description": "## Exercises\n\nBelong to a lecture; hold instructional **blocks**, **test cases**, and a **code_template** that pre-fills the student's editor (e.g. C++ boilerplate or a Python function stub).\n\n**Access control:** writes are `admin_only`; reads require enrollment in the exercise's parent course.\n\n**Test cases drive grading.** Every `TestCase` row attached to an exercise (`input` + `expected_output`) is used by the Submissions flow: the student's program is run once per test case (sequentially) with `input` as stdin, and stdout is compared against `expected_output`. Execution stops at the first failure. See the **Submissions** folder for the full grading flow and the `passed_count`/`total_count` response fields.\n\n---\n\n### Example 1 \u2014 Admin creates an exercise with a C++ template\n**Request:** `POST /exercises`\n```json\n{\n  \"lecture_id\": \"{{lecture_id}}\",\n  \"title\": \"FizzBuzz\",\n  \"position\": 0,\n  \"code_template\": \"#include <iostream>\\n\\nint main() {\\n    // your code here\\n    return 0;\\n}\"\n}\n```\n\n### Example 2 \u2014 Admin creates a Python exercise instead\n```json\n{\n  \"lecture_id\": \"{{lecture_id}}\",\n  \"title\": \"Reverse a String\",\n  \"position\": 1,\n  \"code_template\": \"def reverse_string(s):\\n    pass\"\n}\n```\n`code_template` is just a string \u2014 the client renders it as the starting point in the student's code editor.\n\n### Example 3 \u2014 Adding test cases that will be used for grading\n**Request:** `POST /exercises/{{exercise_id}}/test-cases`\n```json\n{ \"exercise_id\": \"{{exercise_id}}\", \"input\": \"15\", \"expected_output\": \"FizzBuzz\", \"description\": \"Divisible by both 3 and 5\" }\n```\nAdd several test cases with different `input` values \u2014 each becomes a separate graded run when a student submits. Runs are sequential and stop at the first failure (see Submissions folder for full details).\n\n### Example 4 \u2014 Student fetches the exercise to start working\n**Request:** `GET /exercises/{{exercise_id}}`\n**Response `200`:**\n```json\n{\n  \"id\": \"...\",\n  \"lecture_id\": \"...\",\n  \"title\": \"FizzBuzz\",\n  \"position\": 0,\n  \"code_template\": \"#include <iostream>...\"\n}\n```\n"
+    },
+    {
+      "name": "Submissions",
+      "description": "## Submissions \u2014 Remote Code Execution & Test Case Grading\n\nStudents submit code for an exercise; it's executed in an isolated Docker container on a separate runner VM, graded against the exercise's test cases, and the result is returned synchronously.\n\n**How execution works:**\n1. A `Submission` row is created with `status = queued`, then flipped to `running`\n2. All `TestCase` rows for the exercise are fetched in order\n3. The code is sent to the remote executor **one test case at a time** \u2014 each call is a single-element `/run-batch` request\n4. Each run's stdout is compared (trimmed) against that test case's `expected_output`\n5. **On the first failure** (wrong output, non-zero exit code, or timeout) the loop `break`s \u2014 no further test cases are executed\n6. `passed_count` and `total_count` are stored on the submission; a `SubmissionTestResult` row is written for every test case that **was** run\n\n**Grading result fields:**\n- `passed_count` \u2014 integer count of test cases that passed (e.g. `17`)\n- `total_count` \u2014 total test cases on the exercise (e.g. `36`)\n- Display as `\"17/36\"` on the frontend\n- Both are `null` when the exercise has no test cases\n- `test_results` \u2014 array of per-test-case objects (only for test cases that were actually run, stopping at the first failure)\n\n**`TestCaseResult` shape:**\n```json\n{\n  \"test_case_id\": \"uuid\",\n  \"order_index\": 0,\n  \"passed\": true,\n  \"actual_output\": \"...\",\n  \"stderr\": \"\",\n  \"exit_code\": \"0\",\n  \"timed_out\": false\n}\n```\n\n**Status logic:**\n| Condition | `status` |\n|---|---|\n| All test cases passed | `passed` |\n| First failure was a timeout | `timeout` |\n| First failure was a non-zero exit code | `error` |\n| First failure was wrong output (exit 0) | `failed` |\n\n**No test cases on the exercise?** The submission still runs once (no stdin, no grading) \u2014 `passed_count`, `total_count`, and `test_results` are `null`/`[]`, and status is based on whether the program exited cleanly.\n\n**Access control:** same `enrolled_for_exercise` guard as exercises \u2014 must be enrolled in the parent course. Students only see their own submissions; admins see everyone's.\n\n**Supported languages:** `python`, `cpp`\n\n---\n\n### Example 1 \u2014 All test cases pass\n**Request:** `POST /exercises/{{exercise_id}}/submissions`\n```json\n{ \"code\": \"n = int(input())\\nprint(n * 2)\", \"language\": \"python\" }\n```\n**Response `201`:**\n```json\n{\n  \"id\": \"d4e5f6a7-...\",\n  \"status\": \"passed\",\n  \"passed_count\": 3,\n  \"total_count\": 3,\n  \"stdout\": \"10\\n\",\n  \"stderr\": \"\",\n  \"exit_code\": \"0\",\n  \"timed_out\": false,\n  \"created_at\": \"2026-06-24T10:00:00Z\",\n  \"test_results\": [\n    { \"test_case_id\": \"...\", \"order_index\": 0, \"passed\": true, \"actual_output\": \"4\\n\",  \"exit_code\": \"0\", \"timed_out\": false },\n    { \"test_case_id\": \"...\", \"order_index\": 1, \"passed\": true, \"actual_output\": \"6\\n\",  \"exit_code\": \"0\", \"timed_out\": false },\n    { \"test_case_id\": \"...\", \"order_index\": 2, \"passed\": true, \"actual_output\": \"10\\n\", \"exit_code\": \"0\", \"timed_out\": false }\n  ]\n}\n```\n`stdout` reflects the **last** test case executed. `passed_count`/`total_count` give the fraction for the frontend.\n\n### Example 2 \u2014 Early stop on first wrong answer\nBuggy code passes test case 0, fails test case 1 (wrong output). Test cases 2\u201335 are **never executed**.\n**Response `201`:**\n```json\n{\n  \"status\": \"failed\",\n  \"passed_count\": 1,\n  \"total_count\": 36,\n  \"test_results\": [\n    { \"order_index\": 0, \"passed\": true,  \"actual_output\": \"2\\n\" },\n    { \"order_index\": 1, \"passed\": false, \"actual_output\": \"wrong\\n\" }\n  ]\n}\n```\nOnly 2 `test_results` rows exist in the DB \u2014 test cases 2\u201335 have no rows because execution stopped.\n\n### Example 3 \u2014 Submission to an exercise WITH NO test cases\n**Response `201`:**\n```json\n{ \"status\": \"passed\", \"passed_count\": null, \"total_count\": null, \"test_results\": [], \"stdout\": \"Hello World\\n\", \"exit_code\": \"0\" }\n```\n\n### Example 4 \u2014 Compilation error (C++)\nFirst test case fails with non-zero exit code \u2192 execution stops immediately.\n**Response `201`:**\n```json\n{\n  \"status\": \"error\",\n  \"passed_count\": 0,\n  \"total_count\": 36,\n  \"test_results\": [\n    { \"order_index\": 0, \"passed\": false, \"actual_output\": \"\", \"stderr\": \"Compilation error:\\n...\", \"exit_code\": \"1\" }\n  ]\n}\n```\n\n### Example 5 \u2014 Timeout on first test case\n**Response `201`:**\n```json\n{\n  \"status\": \"timeout\",\n  \"passed_count\": 0,\n  \"total_count\": 36,\n  \"test_results\": [\n    { \"order_index\": 0, \"passed\": false, \"timed_out\": true, \"exit_code\": \"124\" }\n  ]\n}\n```\n\n### Example 6 \u2014 Submission history for an exercise\n**Request:** `GET /exercises/{{exercise_id}}/submissions`\n**Response `200`:**\n```json\n[\n  { \"id\": \"...\", \"status\": \"passed\",  \"passed_count\": 36, \"total_count\": 36, \"created_at\": \"2026-06-24T10:00:00Z\", \"test_results\": [...] },\n  { \"id\": \"...\", \"status\": \"failed\",  \"passed_count\": 1,  \"total_count\": 36, \"created_at\": \"2026-06-24T09:55:00Z\", \"test_results\": [...] },\n  { \"id\": \"...\", \"status\": \"timeout\", \"passed_count\": 0,  \"total_count\": 36, \"created_at\": \"2026-06-24T09:50:00Z\", \"test_results\": [...] }\n]\n```\nOrdered newest-first. `test_results` is included on every item \u2014 each list only contains the test cases that were actually run for that submission.\n\n### Example 7 \u2014 Admin reviewing a specific attempt\n**Request:** `GET /exercises/{{exercise_id}}/submissions/{{submission_id}}`\nAdmins can fetch **any** submission; a student fetching someone else's `submission_id` gets `403 Access denied`.\n",
+      "item": [
+        {
+          "name": "Submit C++ Solution (graded against test cases)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"#include <iostream>\\nusing namespace std;\\n\\nint main() {\\n    int n;\\n    cin >> n;\\n    cout << n * 2 << endl;\\n    return 0;\\n}\",\n  \"language\": \"cpp\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}/submissions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}",
+                "submissions"
+              ]
+            },
+            "description": "Submits C++ code that doubles its input. Test cases are run one at a time; execution stops on the first failure. Response includes `passed_count`/`total_count` integers (e.g. `3`/`36`) and a `test_results` array covering only the test cases that were actually executed."
+          }
+        },
+        {
+          "name": "Submit Python Solution (graded against test cases)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"n = int(input())\\nfor i in range(1, n+1):\\n    if i % 15 == 0:\\n        print(\\\"FizzBuzz\\\")\\n    elif i % 3 == 0:\\n        print(\\\"Fizz\\\")\\n    elif i % 5 == 0:\\n        print(\\\"Buzz\\\")\\n    else:\\n        print(i)\",\n  \"language\": \"python\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}/submissions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}",
+                "submissions"
+              ]
+            },
+            "description": "Reads an integer from stdin and prints FizzBuzz up to it. Pairs well with test cases that supply different `input` values (e.g. \"5\", \"15\", \"3\"). Each test case is run sequentially; the first wrong answer, crash, or timeout stops execution and no further test cases are run. The `submission_id` is auto-saved to the collection variable."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.id) {",
+                  "    pm.collectionVariables.set('submission_id', res.id);",
+                  "    console.log('submission_id saved:', res.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Submit Solution (no test cases on exercise)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"print(\\\"Hello World\\\")\",\n  \"language\": \"python\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}/submissions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}",
+                "submissions"
+              ]
+            },
+            "description": "Use this against an exercise that has ZERO test cases attached. The code runs exactly once with no stdin. `passed_count`, `total_count` will be `null` and `test_results` will be `[]` since there is nothing to grade against."
+          }
+        },
+        {
+          "name": "Submit Broken Code (test stderr / compile error)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"print(\\\"missing closing quote)\",\n  \"language\": \"python\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}/submissions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}",
+                "submissions"
+              ]
+            },
+            "description": "Intentionally broken code. The first test case fails with a non-zero exit code, execution stops immediately. `passed_count` is 0, `status` is `error`, and `test_results` has exactly one entry (the failed first run)."
+          }
+        },
+        {
+          "name": "Submit Infinite Loop (test timeout)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"while True:\\n    pass\",\n  \"language\": \"python\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}/submissions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}",
+                "submissions"
+              ]
+            },
+            "description": "Infinite loop \u2014 verifies `timed_out` is true and `exit_code` is '124'. The first test case times out, execution stops, and `test_results` has exactly one entry. `status` is `timeout`, `passed_count` is 0."
+          }
+        },
+        {
+          "name": "List My Submissions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}/submissions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}",
+                "submissions"
+              ]
+            },
+            "description": "Students see only their own submissions ordered newest first. Each submission includes `passed_count`, `total_count`, and `test_results`. Admins see all submissions for the exercise."
+          }
+        },
+        {
+          "name": "Get Submission",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/exercises/{{exercise_id}}/submissions/{{submission_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exercise_id}}",
+                "submissions",
+                "{{submission_id}}"
+              ]
+            },
+            "description": "Fetch a specific submission by ID. Response includes `passed_count`, `total_count`, `status`, `stdout`, `stderr`, `exit_code`, `timed_out`, and the full `test_results` array."
+          }
+        }
+      ]
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  }
+}

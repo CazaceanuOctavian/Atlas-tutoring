@@ -9,7 +9,11 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        # import (not legacyPackages) so we can allow the unfree claude-code
+        pkgs = import nixpkgs {
+          inherit system;
+          config.allowUnfree = true;
+        };
 
         pythonEnv = pkgs.python312.withPackages (ps: with ps; [
           fastapi
@@ -43,11 +47,13 @@
             pkgs.firebase-tools
             pkgs.google-cloud-sdk
             pkgs.just
+            pkgs.claude-code
           ];
 
           shellHook = ''
             echo "Python $(python --version)"
             echo "Firebase CLI $(firebase --version)"
+            echo "Claude Code $(claude --version)"
             echo ""
             echo "Quick-start:"
             echo "  uvicorn main:app --reload   # start dev server"
@@ -61,7 +67,7 @@
               echo "WARNING: env.json not found — DATABASE_URL not set."
             fi
           '';
-        };  
+        };
 
         packages.default = pkgs.stdenv.mkDerivation {
           pname = "fastapi-firebase-app";
