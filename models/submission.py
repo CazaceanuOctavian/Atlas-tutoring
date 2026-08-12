@@ -1,7 +1,7 @@
 import uuid
 import enum
 
-from sqlalchemy import Column, DateTime, ForeignKey, Text, Enum, Boolean, Float
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text, Enum, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -40,8 +40,15 @@ class Submission(Base):
     timed_out        = Column(Boolean, nullable=True)
     exit_code        = Column(Text,  nullable=True)
 
-    # Test case grading — percentage of test cases passed (0.0 - 100.0)
-    passed_testcases = Column(Float, nullable=True)
+    # Test case grading — null when there are no test cases
+    passed_count = Column(Integer, nullable=True)
+    total_count  = Column(Integer, nullable=True)
 
-    exercise = relationship("Exercise", back_populates="submissions")
-    student  = relationship("User",     back_populates="submissions")
+    exercise     = relationship("Exercise",            back_populates="submissions")
+    student      = relationship("User",                back_populates="submissions")
+    test_results = relationship(
+        "SubmissionTestResult",
+        back_populates="submission",
+        cascade="all, delete-orphan",
+        order_by="SubmissionTestResult.order_index",
+    )
