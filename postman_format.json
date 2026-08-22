@@ -239,7 +239,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"title\": \"Introduction to Python\",\n  \"description\": \"A beginner-friendly Python course.\"\n}"
+              "raw": "{\n  \"title\": \"Introduction to Python\",\n  \"description\": \"A beginner-friendly Python course.\",\n  \"position\": 0\n}"
             },
             "url": {
               "raw": "{{base_url}}/courses",
@@ -313,7 +313,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"title\": \"Advanced Python\",\n  \"description\": \"Updated description.\"\n}"
+              "raw": "{\n  \"title\": \"Advanced Python\",\n  \"description\": \"Updated description.\",\n  \"position\": 1\n}"
             },
             "url": {
               "raw": "{{base_url}}/courses/{{course_id}}",
