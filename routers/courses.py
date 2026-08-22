@@ -30,7 +30,7 @@ async def list_courses(
     _: User = Depends(student_only),
 ):
     """Any authenticated user can see the course catalogue."""
-    result = await db.scalars(select(Course).offset(skip).limit(limit))
+    result = await db.scalars(select(Course).order_by(Course.position).offset(skip).limit(limit))
     return result.all()
 
 
