@@ -16,6 +16,7 @@ class _OrmBase(BaseModel):
 class CourseBase(_OrmBase):
     title:       str
     description: Optional[str] = None
+    position:    int = 0
 
 
 class CourseCreate(CourseBase):
@@ -25,6 +26,7 @@ class CourseCreate(CourseBase):
 class CourseUpdate(_OrmBase):
     title:       Optional[str] = None
     description: Optional[str] = None
+    position:    Optional[int] = None
 
 
 class Course(CourseBase):
