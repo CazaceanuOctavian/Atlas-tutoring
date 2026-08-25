@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Tutoring Platform API",
-    "description": "# Atlas \u2014 Tutoring Platform API\n\nBackend for a coding-education platform: courses \u2192 chapters \u2192 lectures \u2192 exercises, with Google OAuth2 login, role-based access (admin/student), enrollment-gated content, and remote code execution with test-case grading for exercise submissions.\n\n## Getting started\n1. Set `base_url` (defaults to `http://localhost:8000/api/v1`)\n2. Open the **Google Login** URL in a browser and sign in\n3. Copy the `code` from the redirect into `google_code`, then run **Google Callback** \u2014 your `access_token` is saved automatically\n4. Every other request authenticates using `{{access_token}}` automatically\n\n## Roles\n- **admin** \u2014 full CRUD on all content (courses, chapters, lectures, exercises, blocks, test cases)\n- **student** \u2014 read-only, and only for courses they're enrolled in. Must `POST /enrollments` before accessing course content.\n\n## Code execution & grading\nStudent submissions are executed remotely on an isolated Docker container. If an exercise has test cases, the submitted code is run **one test case at a time** (sequentially), feeding each test case's `input` as stdin. Execution **stops immediately on the first failure** \u2014 no further test cases are run after a wrong answer, crash, or timeout. Each submission returns `passed_count` and `total_count` as integers (e.g. `17` and `36`, display as `\"17/36\"`) alongside a `test_results` array with the per-test-case breakdown. `passed_count`/`total_count` are `null` if the exercise has no test cases.\n\n## Folder guide\n| Folder | Covers |\n|---|---|\n| Auth | Google OAuth2 login/logout, JWT issuance |\n| Courses | Top-level content containers |\n| Enrollments | Connects students to courses \u2014 required before content access |\n| Chapters | Ordered groups of lectures within a course |\n| Lectures | Markdown content blocks + exercises within a chapter |\n| Exercises | Coding problems with a starter `code_template` and test cases used for grading |\n| Submissions | Student code submissions, executed remotely in Docker, graded against test cases |\n\nEach folder has its own detailed documentation with multiple worked examples \u2014 click into a folder and view its description.\n",
+    "description": "# Atlas \u2014 Tutoring Platform API\n\nBackend for a coding-education platform: courses \u2192 chapters \u2192 lectures \u2192 exercises, with Google OAuth2 login, role-based access (admin/student), enrollment-gated content, and remote code execution with test-case grading for exercise submissions.\n\n## Getting started\n1. Set `base_url` (defaults to `http://localhost:8000/api/v1`)\n2. Open the **Google Login** URL in a browser and sign in\n3. Copy the `code` from the redirect into `google_code`, then run **Google Callback** \u2014 your `access_token` is saved automatically\n4. Every other request authenticates using `{{access_token}}` automatically\n\n## Roles\n- **admin** \u2014 full CRUD on all content (courses, chapters, lectures, exercises, blocks, test cases)\n- **professor** \u2014 read-only access to courses they are assigned to (via `POST /courses/{id}/professors`). Assigned by admins.\n- **student** \u2014 read-only, and only for courses they're enrolled in. Must `POST /enrollments` before accessing course content.\n\n## Code execution & grading\nStudent submissions are executed remotely on an isolated Docker container. If an exercise has test cases, the submitted code is run **one test case at a time** (sequentially), feeding each test case's `input` as stdin. Execution **stops immediately on the first failure** \u2014 no further test cases are run after a wrong answer, crash, or timeout. Each submission returns `passed_count` and `total_count` as integers (e.g. `17` and `36`, display as `\"17/36\"`) alongside a `test_results` array with the per-test-case breakdown. `passed_count`/`total_count` are `null` if the exercise has no test cases.\n\n## Folder guide\n| Folder | Covers |\n|---|---|\n| Auth | Google OAuth2 login/logout, JWT issuance |\n| Courses | Top-level content containers |\n| Enrollments | Connects students to courses \u2014 required before content access |\n| Professors | Assigns professor-role users to courses \u2014 admin only |\n| Availability | Professor-published time windows with student capacity caps |\n| Bookings | Student session bookings within availability windows |\n| Chapters | Ordered groups of lectures within a course |\n| Lectures | Markdown content blocks + exercises within a chapter |\n| Exercises | Coding problems with a starter `code_template` and test cases used for grading |\n| Submissions | Student code submissions, executed remotely in Docker, graded against test cases |\n\nEach folder has its own detailed documentation with multiple worked examples \u2014 click into a folder and view its description.\n",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -52,6 +52,14 @@
     {
       "key": "submission_id",
       "value": "00000000-0000-0000-0000-000000000009"
+    },
+    {
+      "key": "availability_id",
+      "value": "00000000-0000-0000-0000-000000000010"
+    },
+    {
+      "key": "booking_id",
+      "value": "00000000-0000-0000-0000-000000000011"
     },
     {
       "key": "debug_email",
@@ -478,6 +486,264 @@
         }
       ],
       "description": "## Enrollments\n\nConnects students to courses. Enrollment is the gate that the `enrolled_for_*` dependencies check before letting a student see chapter/lecture/exercise content.\n\n**Rules:**\n- Admins can enroll or unenroll **any** user in **any** course.\n- Students can only enroll/unenroll **themselves** (`user_id` in the body must match their own JWT `sub`).\n- Re-enrolling in the same course returns `409 Conflict` (the `UNIQUE(user_id, course_id)` DB constraint).\n\n---\n\n### Example 1 \u2014 Student self-enrolls\n**Request:** `POST /enrollments`\n```json\n{ \"user_id\": \"{{user_id}}\", \"course_id\": \"{{course_id}}\" }\n```\n**Response `201`:**\n```json\n{\n  \"id\": \"a1b2c3d4-...\",\n  \"user_id\": \"91deb5e7-464a-471f-9fb7-f4589ce0f35d\",\n  \"course_id\": \"018732f6-ae85-4cfc-ba46-e3e78a4291d8\",\n  \"enrolled_at\": \"2026-06-23T09:00:00Z\"\n}\n```\n\n### Example 2 \u2014 Student tries to enroll someone else\n**Request:** `POST /enrollments` with a `user_id` that isn't their own.\n**Response `403`:**\n```json\n{ \"detail\": \"Students can only enroll themselves\" }\n```\n\n### Example 3 \u2014 Duplicate enrollment\nCalling the same `POST /enrollments` twice with identical `user_id`/`course_id`:\n**Response `409`:**\n```json\n{ \"detail\": \"User is already enrolled in this course\" }\n```\n\n### Example 4 \u2014 Checking your own enrollments\n**Request:** `GET /enrollments/me`\n**Response `200`:**\n```json\n[\n  { \"id\": \"a1b2c3d4-...\", \"user_id\": \"91deb5e7-...\", \"course_id\": \"018732f6-...\", \"enrolled_at\": \"2026-06-23T09:00:00Z\" }\n]\n```\n"
+    },
+    {
+      "name": "Professors",
+      "item": [
+        {
+          "name": "Assign Professor to Course",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{user_id}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/courses/{{course_id}}/professors",
+              "host": ["{{base_url}}"],
+              "path": ["courses", "{{course_id}}", "professors"]
+            },
+            "description": "Assign a professor-role user to a course. Admin only. Returns 400 if the user is not a professor, 409 if already assigned."
+          }
+        },
+        {
+          "name": "List Professors for Course",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/courses/{{course_id}}/professors",
+              "host": ["{{base_url}}"],
+              "path": ["courses", "{{course_id}}", "professors"]
+            },
+            "description": "List all professors assigned to a course. Requires enrollment (or assignment for professors, or admin)."
+          }
+        },
+        {
+          "name": "Remove Professor from Course",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/courses/{{course_id}}/professors/{{user_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["courses", "{{course_id}}", "professors", "{{user_id}}"]
+            },
+            "description": "Remove a professor's assignment from a course. Admin only. Returns 404 if the assignment does not exist."
+          }
+        }
+      ],
+      "description": "## Professors\n\nAssigns users with the `professor` role to courses. A course can have multiple professors; a professor can be assigned to multiple courses.\n\n**Rules:**\n- Only admins can assign or remove professors.\n- The user must have `role: professor` before being assigned — use the debug token or update the user role first.\n- Professors access course content through the same `enrolled_for_*` guards as students, but via `course_assignments` instead of `enrollments`.\n\n---\n\n### Assign a professor\n**Request:** `POST /courses/{{course_id}}/professors`\n```json\n{ \"user_id\": \"{{user_id}}\" }\n```\n**Response `201`:**\n```json\n{ \"id\": \"...\", \"user_id\": \"...\", \"course_id\": \"...\", \"assigned_at\": \"2026-01-01T00:00:00Z\" }\n```\n\n### Remove a professor\n**Request:** `DELETE /courses/{{course_id}}/professors/{{user_id}}`\n**Response `204`:** No content.\n"
+    },
+    {
+      "name": "Availability",
+      "item": [
+        {
+          "name": "Create Availability Window",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"course_id\": \"{{course_id}}\",\n  \"start_time\": \"2026-09-01T10:00:00Z\",\n  \"end_time\": \"2026-09-01T12:00:00Z\",\n  \"max_students\": 3\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/availability",
+              "host": ["{{base_url}}"],
+              "path": ["availability"]
+            },
+            "description": "Professor creates an availability window for a course they are assigned to. `max_students` caps how many students can book into this window."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.id) { pm.collectionVariables.set('availability_id', res.id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Availability Windows",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/availability?course_id={{course_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["availability"],
+              "query": [
+                { "key": "course_id",    "value": "{{course_id}}", "description": "Filter by course (optional)" },
+                { "key": "professor_id", "value": "",              "description": "Filter by professor (optional)", "disabled": true }
+              ]
+            },
+            "description": "Returns windows scoped by role. Professors see their own; students see windows for their enrolled courses; admins see all. Each window includes `booked_count` so clients can show remaining capacity."
+          }
+        },
+        {
+          "name": "Get Availability Window",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/availability/{{availability_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["availability", "{{availability_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Availability Window",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"max_students\": 5\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/availability/{{availability_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["availability", "{{availability_id}}"]
+            },
+            "description": "Professor updates their own window. All fields optional. Admins can update any window."
+          }
+        },
+        {
+          "name": "Delete Availability Window",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/availability/{{availability_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["availability", "{{availability_id}}"]
+            },
+            "description": "Professor deletes their own window. Cascades to all bookings within it. Admins can delete any window."
+          }
+        }
+      ],
+      "description": "## Availability\n\nProfessors publish time windows during which they are available to teach. Each window is scoped to a specific course and carries a `max_students` cap.\n\n**Rules:**\n- Only professors (and admins) can create, update, or delete windows.\n- A professor can only manage windows they own.\n- Deleting a window cascades to all bookings inside it.\n- `booked_count` in the response is the number of active (non-cancelled) bookings against that window.\n\n---\n\n### Example — create a window\n```json\nPOST /availability\n{\n  \"course_id\": \"{{course_id}}\",\n  \"start_time\": \"2026-09-01T10:00:00Z\",\n  \"end_time\":   \"2026-09-01T12:00:00Z\",\n  \"max_students\": 3\n}\n```\n**Response `201`:**\n```json\n{ \"id\": \"...\", \"professor_id\": \"...\", \"course_id\": \"...\", \"start_time\": \"...\", \"end_time\": \"...\", \"max_students\": 3, \"booked_count\": 0, \"created_at\": \"...\" }\n```\n"
+    },
+    {
+      "name": "Bookings",
+      "item": [
+        {
+          "name": "Create Booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"availability_id\": \"{{availability_id}}\",\n  \"start_time\": \"2026-09-01T10:00:00Z\",\n  \"end_time\": \"2026-09-01T11:00:00Z\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/bookings",
+              "host": ["{{base_url}}"],
+              "path": ["bookings"]
+            },
+            "description": "Student books a time slot within a professor's availability window. Returns 403 if not enrolled in the course, 422 if times fall outside the window, 409 if the window is fully booked."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.id) { pm.collectionVariables.set('booking_id', res.id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Bookings",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/bookings",
+              "host": ["{{base_url}}"],
+              "path": ["bookings"],
+              "query": [
+                { "key": "course_id",       "value": "{{course_id}}",       "description": "Filter by course (optional)",       "disabled": true },
+                { "key": "availability_id", "value": "{{availability_id}}", "description": "Filter by availability (optional)", "disabled": true }
+              ]
+            },
+            "description": "Returns bookings scoped by role: students see their own, professors see bookings on their windows, admins see all."
+          }
+        },
+        {
+          "name": "Get Booking",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/bookings/{{booking_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["bookings", "{{booking_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Booking Status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type",  "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"confirmed\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/bookings/{{booking_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["bookings", "{{booking_id}}"]
+            },
+            "description": "Update booking status. Professor can set `confirmed` or `cancelled`. Student can only set `cancelled`. Admin has no restrictions."
+          }
+        }
+      ],
+      "description": "## Bookings\n\nStudents book sessions within a professor's availability window. Bookings start in `pending` status; the professor then confirms or cancels.\n\n**Status transitions:**\n- `pending` → `confirmed` (professor or admin)\n- `pending` / `confirmed` → `cancelled` (student, professor, or admin)\n\n**Booking rules:**\n- Only students can create bookings.\n- The student must be enrolled in the course the availability window belongs to.\n- `start_time` and `end_time` must fall within the availability window.\n- The number of active (non-cancelled) bookings must be below `max_students`.\n\n---\n\n### Example — student books a slot\n```json\nPOST /bookings\n{\n  \"availability_id\": \"{{availability_id}}\",\n  \"start_time\": \"2026-09-01T10:00:00Z\",\n  \"end_time\":   \"2026-09-01T11:00:00Z\"\n}\n```\n**Response `201`:**\n```json\n{ \"id\": \"...\", \"student_id\": \"...\", \"professor_id\": \"...\", \"course_id\": \"...\", \"availability_id\": \"...\", \"start_time\": \"...\", \"end_time\": \"...\", \"status\": \"pending\", \"created_at\": \"...\" }\n```\n"
     },
     {
       "name": "Chapters",

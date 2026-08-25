@@ -116,4 +116,4 @@ def require_role(*roles: UserRole):
 
 # Convenience aliases
 require_admin   = require_role(UserRole.admin)
-require_student = require_role(UserRole.student, UserRole.admin)  # admins can do anything students can
+require_student = require_role(UserRole.student, UserRole.professor, UserRole.admin)
