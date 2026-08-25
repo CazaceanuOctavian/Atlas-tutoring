@@ -9,6 +9,8 @@ from config import auth_settings
 from db.session import engine
 from models.base import Base
 from routers.auth import router as auth_router
+from routers.availability import router as availability_router
+from routers.bookings import router as bookings_router
 from routers.chapters import router as chapters_router
 from routers.courses import router as courses_router
 from routers.enrollments import router as enrollments_router
@@ -48,14 +50,16 @@ def create_app() -> FastAPI:
     # ---------------------------
     # Routers
     # ---------------------------
-    app.include_router(auth_router,        prefix="/api/v1")
-    app.include_router(courses_router,     prefix="/api/v1")
-    app.include_router(enrollments_router, prefix="/api/v1")
-    app.include_router(chapters_router,    prefix="/api/v1")
-    app.include_router(lectures_router,    prefix="/api/v1")
-    app.include_router(exercises_router,   prefix="/api/v1")
-    app.include_router(professors_router,  prefix="/api/v1")
-    app.include_router(submissions_router, prefix="/api/v1")
+    app.include_router(auth_router,         prefix="/api/v1")
+    app.include_router(courses_router,      prefix="/api/v1")
+    app.include_router(enrollments_router,  prefix="/api/v1")
+    app.include_router(chapters_router,     prefix="/api/v1")
+    app.include_router(lectures_router,     prefix="/api/v1")
+    app.include_router(exercises_router,    prefix="/api/v1")
+    app.include_router(professors_router,   prefix="/api/v1")
+    app.include_router(availability_router, prefix="/api/v1")
+    app.include_router(bookings_router,     prefix="/api/v1")
+    app.include_router(submissions_router,  prefix="/api/v1")
 
     # ---------------------------
     # Health Check
