@@ -74,14 +74,6 @@ async def create_booking(
             detail="You are not enrolled in the course this availability belongs to",
         )
 
-    # booking time must fall within the availability window
-    if payload.start_time < slot.start_time or payload.end_time > slot.end_time:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Booking time must fall within the availability window "
-                   f"({slot.start_time.isoformat()} – {slot.end_time.isoformat()})",
-        )
-
     # capacity check
     active = await _active_booking_count(db, slot.id)
     if active >= slot.max_students:
@@ -95,8 +87,8 @@ async def create_booking(
         professor_id    = slot.professor_id,
         course_id       = slot.course_id,
         availability_id = slot.id,
-        start_time      = payload.start_time,
-        end_time        = payload.end_time,
+        start_time      = slot.start_time,
+        end_time        = slot.end_time,
     )
     db.add(booking)
     await db.commit()
