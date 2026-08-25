@@ -14,6 +14,7 @@ from routers.courses import router as courses_router
 from routers.enrollments import router as enrollments_router
 from routers.exercises import router as exercises_router
 from routers.lectures import router as lectures_router
+from routers.professors import router as professors_router
 from routers.submissions import router as submissions_router
 
 
@@ -53,6 +54,7 @@ def create_app() -> FastAPI:
     app.include_router(chapters_router,    prefix="/api/v1")
     app.include_router(lectures_router,    prefix="/api/v1")
     app.include_router(exercises_router,   prefix="/api/v1")
+    app.include_router(professors_router,  prefix="/api/v1")
     app.include_router(submissions_router, prefix="/api/v1")
 
     # ---------------------------

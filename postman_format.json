@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Tutoring Platform API",
-    "description": "# Atlas \u2014 Tutoring Platform API\n\nBackend for a coding-education platform: courses \u2192 chapters \u2192 lectures \u2192 exercises, with Google OAuth2 login, role-based access (admin/student), enrollment-gated content, and remote code execution with test-case grading for exercise submissions.\n\n## Getting started\n1. Set `base_url` (defaults to `http://localhost:8000/api/v1`)\n2. Open the **Google Login** URL in a browser and sign in\n3. Copy the `code` from the redirect into `google_code`, then run **Google Callback** \u2014 your `access_token` is saved automatically\n4. Every other request authenticates using `{{access_token}}` automatically\n\n## Roles\n- **admin** \u2014 full CRUD on all content (courses, chapters, lectures, exercises, blocks, test cases)\n- **student** \u2014 read-only, and only for courses they're enrolled in. Must `POST /enrollments` before accessing course content.\n\n## Code execution & grading\nStudent submissions are executed remotely on an isolated Docker container. If an exercise has test cases, the submitted code is run **one test case at a time** (sequentially), feeding each test case's `input` as stdin. Execution **stops immediately on the first failure** \u2014 no further test cases are run after a wrong answer, crash, or timeout. Each submission returns `passed_count` and `total_count` as integers (e.g. `17` and `36`, display as `\"17/36\"`) alongside a `test_results` array with the per-test-case breakdown. `passed_count`/`total_count` are `null` if the exercise has no test cases.\n\n## Folder guide\n| Folder | Covers |\n|---|---|\n| Auth | Google OAuth2 login/logout, JWT issuance |\n| Courses | Top-level content containers |\n| Enrollments | Connects students to courses \u2014 required before content access |\n| Chapters | Ordered groups of lectures within a course |\n| Lectures | Markdown content blocks + exercises within a chapter |\n| Exercises | Coding problems with a starter `code_template` and test cases used for grading |\n| Submissions | Student code submissions, executed remotely in Docker, graded against test cases |\n\nEach folder has its own detailed documentation with multiple worked examples \u2014 click into a folder and view its description.\n",
+    "description": "# Atlas \u2014 Tutoring Platform API\n\nBackend for a coding-education platform: courses \u2192 chapters \u2192 lectures \u2192 exercises, with Google OAuth2 login, role-based access (admin/student), enrollment-gated content, and remote code execution with test-case grading for exercise submissions.\n\n## Getting started\n1. Set `base_url` (defaults to `http://localhost:8000/api/v1`)\n2. Open the **Google Login** URL in a browser and sign in\n3. Copy the `code` from the redirect into `google_code`, then run **Google Callback** \u2014 your `access_token` is saved automatically\n4. Every other request authenticates using `{{access_token}}` automatically\n\n## Roles\n- **admin** \u2014 full CRUD on all content (courses, chapters, lectures, exercises, blocks, test cases)\n- **professor** \u2014 read-only access to courses they are assigned to (via `POST /courses/{id}/professors`). Assigned by admins.\n- **student** \u2014 read-only, and only for courses they're enrolled in. Must `POST /enrollments` before accessing course content.\n\n## Code execution & grading\nStudent submissions are executed remotely on an isolated Docker container. If an exercise has test cases, the submitted code is run **one test case at a time** (sequentially), feeding each test case's `input` as stdin. Execution **stops immediately on the first failure** \u2014 no further test cases are run after a wrong answer, crash, or timeout. Each submission returns `passed_count` and `total_count` as integers (e.g. `17` and `36`, display as `\"17/36\"`) alongside a `test_results` array with the per-test-case breakdown. `passed_count`/`total_count` are `null` if the exercise has no test cases.\n\n## Folder guide\n| Folder | Covers |\n|---|---|\n| Auth | Google OAuth2 login/logout, JWT issuance |\n| Courses | Top-level content containers |\n| Enrollments | Connects students to courses \u2014 required before content access |\n| Professors | Assigns professor-role users to courses \u2014 admin only |\n| Chapters | Ordered groups of lectures within a course |\n| Lectures | Markdown content blocks + exercises within a chapter |\n| Exercises | Coding problems with a starter `code_template` and test cases used for grading |\n| Submissions | Student code submissions, executed remotely in Docker, graded against test cases |\n\nEach folder has its own detailed documentation with multiple worked examples \u2014 click into a folder and view its description.\n",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -478,6 +478,63 @@
         }
       ],
       "description": "## Enrollments\n\nConnects students to courses. Enrollment is the gate that the `enrolled_for_*` dependencies check before letting a student see chapter/lecture/exercise content.\n\n**Rules:**\n- Admins can enroll or unenroll **any** user in **any** course.\n- Students can only enroll/unenroll **themselves** (`user_id` in the body must match their own JWT `sub`).\n- Re-enrolling in the same course returns `409 Conflict` (the `UNIQUE(user_id, course_id)` DB constraint).\n\n---\n\n### Example 1 \u2014 Student self-enrolls\n**Request:** `POST /enrollments`\n```json\n{ \"user_id\": \"{{user_id}}\", \"course_id\": \"{{course_id}}\" }\n```\n**Response `201`:**\n```json\n{\n  \"id\": \"a1b2c3d4-...\",\n  \"user_id\": \"91deb5e7-464a-471f-9fb7-f4589ce0f35d\",\n  \"course_id\": \"018732f6-ae85-4cfc-ba46-e3e78a4291d8\",\n  \"enrolled_at\": \"2026-06-23T09:00:00Z\"\n}\n```\n\n### Example 2 \u2014 Student tries to enroll someone else\n**Request:** `POST /enrollments` with a `user_id` that isn't their own.\n**Response `403`:**\n```json\n{ \"detail\": \"Students can only enroll themselves\" }\n```\n\n### Example 3 \u2014 Duplicate enrollment\nCalling the same `POST /enrollments` twice with identical `user_id`/`course_id`:\n**Response `409`:**\n```json\n{ \"detail\": \"User is already enrolled in this course\" }\n```\n\n### Example 4 \u2014 Checking your own enrollments\n**Request:** `GET /enrollments/me`\n**Response `200`:**\n```json\n[\n  { \"id\": \"a1b2c3d4-...\", \"user_id\": \"91deb5e7-...\", \"course_id\": \"018732f6-...\", \"enrolled_at\": \"2026-06-23T09:00:00Z\" }\n]\n```\n"
+    },
+    {
+      "name": "Professors",
+      "item": [
+        {
+          "name": "Assign Professor to Course",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{user_id}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/courses/{{course_id}}/professors",
+              "host": ["{{base_url}}"],
+              "path": ["courses", "{{course_id}}", "professors"]
+            },
+            "description": "Assign a professor-role user to a course. Admin only. Returns 400 if the user is not a professor, 409 if already assigned."
+          }
+        },
+        {
+          "name": "List Professors for Course",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/courses/{{course_id}}/professors",
+              "host": ["{{base_url}}"],
+              "path": ["courses", "{{course_id}}", "professors"]
+            },
+            "description": "List all professors assigned to a course. Requires enrollment (or assignment for professors, or admin)."
+          }
+        },
+        {
+          "name": "Remove Professor from Course",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/courses/{{course_id}}/professors/{{user_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["courses", "{{course_id}}", "professors", "{{user_id}}"]
+            },
+            "description": "Remove a professor's assignment from a course. Admin only. Returns 404 if the assignment does not exist."
+          }
+        }
+      ],
+      "description": "## Professors\n\nAssigns users with the `professor` role to courses. A course can have multiple professors; a professor can be assigned to multiple courses.\n\n**Rules:**\n- Only admins can assign or remove professors.\n- The user must have `role: professor` before being assigned — use the debug token or update the user role first.\n- Professors access course content through the same `enrolled_for_*` guards as students, but via `course_assignments` instead of `enrollments`.\n\n---\n\n### Assign a professor\n**Request:** `POST /courses/{{course_id}}/professors`\n```json\n{ \"user_id\": \"{{user_id}}\" }\n```\n**Response `201`:**\n```json\n{ \"id\": \"...\", \"user_id\": \"...\", \"course_id\": \"...\", \"assigned_at\": \"2026-01-01T00:00:00Z\" }\n```\n\n### Remove a professor\n**Request:** `DELETE /courses/{{course_id}}/professors/{{user_id}}`\n**Response `204`:** No content.\n"
     },
     {
       "name": "Chapters",

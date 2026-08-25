@@ -10,8 +10,9 @@ from models.base import Base
 
 
 class UserRole(str, enum.Enum):
-    admin   = "admin"
-    student = "student"
+    admin     = "admin"
+    professor = "professor"
+    student   = "student"
 
 
 class User(Base):
@@ -27,6 +28,9 @@ class User(Base):
 
     enrollments = relationship(
         "Enrollment", back_populates="user", cascade="all, delete-orphan"
+    )
+    course_assignments = relationship(
+        "CourseAssignment", back_populates="user", cascade="all, delete-orphan"
     )
     submissions = relationship(
         "Submission", back_populates="student", cascade="all, delete-orphan"

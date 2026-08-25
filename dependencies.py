@@ -9,8 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import get_db
-from jwt import make_get_current_user, require_admin, require_student
+from jwt import make_get_current_user, require_admin, require_role, require_student
 from models.chapter import Chapter
+from models.course_assignment import CourseAssignment
 from models.enrollment import Enrollment
 from models.exercise import Exercise
 from models.lecture import Lecture
@@ -22,8 +23,9 @@ from models.user import User, UserRole
 
 get_current_user = make_get_current_user(get_db)
 
-admin_only   = require_admin(get_current_user)
-student_only = require_student(get_current_user)
+admin_only     = require_admin(get_current_user)
+professor_only = require_role(UserRole.professor, UserRole.admin)(get_current_user)
+student_only   = require_student(get_current_user)
 
 
 # ---------------------------------------------------------------------------
@@ -31,8 +33,21 @@ student_only = require_student(get_current_user)
 # ---------------------------------------------------------------------------
 
 async def _check_enrollment(user: User, course_id: uuid.UUID, db: AsyncSession) -> None:
-    """Raises 403 if the student is not enrolled in the given course."""
+    """Raises 403 if the user cannot access the given course."""
     if user.role == UserRole.admin:
+        return
+    if user.role == UserRole.professor:
+        result = await db.scalars(
+            select(CourseAssignment).where(
+                CourseAssignment.user_id   == user.id,
+                CourseAssignment.course_id == course_id,
+            )
+        )
+        if not result.first():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not assigned to this course",
+            )
         return
     result = await db.scalars(
         select(Enrollment).where(

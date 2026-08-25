@@ -3,6 +3,7 @@
 
 from models.chapter import Chapter
 from models.course import Course
+from models.course_assignment import CourseAssignment
 from models.enrollment import Enrollment
 from models.exercise import Exercise
 from models.exercise_block import ExerciseBlock
@@ -18,6 +19,7 @@ from models.auth_handoff import AuthHandoff
 __all__ = [
     "User",
     "Course",
+    "CourseAssignment",
     "Enrollment",
     "Chapter",
     "Lecture",

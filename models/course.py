@@ -20,6 +20,9 @@ class Course(Base):
     enrollments = relationship(
         "Enrollment", back_populates="course", cascade="all, delete-orphan"
     )
+    professor_assignments = relationship(
+        "CourseAssignment", back_populates="course", cascade="all, delete-orphan"
+    )
     chapters = relationship(
         "Chapter", back_populates="course", cascade="all, delete-orphan",
         order_by="Chapter.position",
