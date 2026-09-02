@@ -74,6 +74,21 @@ async def create_booking(
             detail="You are not enrolled in the course this availability belongs to",
         )
 
+    # overlap check — student cannot have two active bookings at the same time
+    overlap = await db.scalars(
+        select(SessionBooking).where(
+            SessionBooking.student_id == current_user.id,
+            SessionBooking.status != BookingStatus.cancelled,
+            SessionBooking.start_time < slot.end_time,
+            SessionBooking.end_time > slot.start_time,
+        )
+    )
+    if overlap.first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You already have a booking that overlaps with this time slot",
+        )
+
     # capacity check
     active = await _active_booking_count(db, slot.id)
     if active >= slot.max_students:

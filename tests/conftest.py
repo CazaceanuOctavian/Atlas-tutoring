@@ -19,12 +19,12 @@ ASYNC_DB_URL = os.environ.get(
     "DATABASE_URL",
     "postgresql+asyncpg://postgres:postgres@localhost:5432/atlas_test",
 )
-# psycopg2 is in requirements.txt; used only for sync fixture setup
+# psycopg2-binary is in requirements.txt; used only for sync fixture setup
 SYNC_DB_URL = ASYNC_DB_URL.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
 
 
 # ---------------------------------------------------------------------------
-# Session-scoped sync engine — no event loop involved, safe across all tests
+# Session-scoped sync engine — no event loop, safe across all tests
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
@@ -40,43 +40,55 @@ def _create_tables(_sync_engine):
 
 
 # ---------------------------------------------------------------------------
-# User fixtures — sync so they never touch an event loop
+# Helpers
 # ---------------------------------------------------------------------------
 
-@pytest.fixture
-def admin_user():
-    """In-memory admin — auth deps are overridden, so it never needs to be in the DB."""
-    user_id = uuid.uuid4()
-    return SimpleNamespace(
-        id=user_id,
-        name="Test Admin",
-        email=f"admin_{user_id.hex[:8]}@test.com",
-        role=UserRole.admin,
-    )
-
-
-@pytest.fixture
-def student_user(_sync_engine):
-    """Student inserted into the DB (enrollment endpoints verify user existence)."""
-    user_id = uuid.uuid4()
-    email = f"student_{user_id.hex[:8]}@test.com"
-    with _sync_engine.connect() as conn:
+def _db_insert_user(sync_engine, user_id, name, email, role: str):
+    with sync_engine.connect() as conn:
         conn.execute(
             text(
                 "INSERT INTO users (id, name, email, role)"
                 " VALUES (:id, :name, :email, :role)"
             ),
-            {"id": str(user_id), "name": "Test Student", "email": email, "role": "student"},
+            {"id": str(user_id), "name": name, "email": email, "role": role},
         )
         conn.commit()
-    yield SimpleNamespace(id=user_id, name="Test Student", email=email, role=UserRole.student)
-    with _sync_engine.connect() as conn:
+
+
+def _db_delete_user(sync_engine, user_id):
+    with sync_engine.connect() as conn:
         conn.execute(text("DELETE FROM users WHERE id = :id"), {"id": str(user_id)})
         conn.commit()
 
 
 # ---------------------------------------------------------------------------
-# HTTP client fixtures — each creates its own async engine in its own loop
+# User fixtures — sync so they never touch an event loop.
+# Both are stored in the DB: admin_user because availability windows store
+# professor_id as a FK; student_user because booking/enrollment endpoints
+# verify user existence via db.get(User, ...).
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def admin_user(_sync_engine):
+    user_id = uuid.uuid4()
+    email = f"admin_{user_id.hex[:8]}@test.com"
+    _db_insert_user(_sync_engine, user_id, "Test Admin", email, "admin")
+    yield SimpleNamespace(id=user_id, name="Test Admin", email=email, role=UserRole.admin)
+    _db_delete_user(_sync_engine, user_id)
+
+
+@pytest.fixture
+def student_user(_sync_engine):
+    user_id = uuid.uuid4()
+    email = f"student_{user_id.hex[:8]}@test.com"
+    _db_insert_user(_sync_engine, user_id, "Test Student", email, "student")
+    yield SimpleNamespace(id=user_id, name="Test Student", email=email, role=UserRole.student)
+    _db_delete_user(_sync_engine, user_id)
+
+
+# ---------------------------------------------------------------------------
+# HTTP client fixtures — each creates its own async engine inside its own
+# event loop, so asyncpg never sees cross-loop connection sharing.
 # ---------------------------------------------------------------------------
 
 def _build_app(user, override_get_db):
@@ -129,3 +141,23 @@ async def student_client(student_user):
         yield client
 
     await eng.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Shared cross-file fixture
+# `course` is intentionally NOT defined here — each test file defines its own
+# so teardown ordering stays local. This fixture resolves `course` from the
+# test module that requests it.
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture
+async def enrollment(admin_client, student_user, course):
+    """Enroll student_user in the local `course` fixture via the admin client."""
+    resp = await admin_client.post(
+        "/api/v1/enrollments/",
+        json={"user_id": str(student_user.id), "course_id": course["id"]},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    yield data
+    await admin_client.delete(f"/api/v1/enrollments/{data['id']}")
