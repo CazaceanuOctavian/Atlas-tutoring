@@ -105,6 +105,7 @@ async def admin_client(admin_user):
     async with AsyncClient(
         transport=ASGITransport(app=_build_app(admin_user, override_get_db)),
         base_url="http://test",
+        follow_redirects=True,
     ) as client:
         yield client
 
@@ -123,6 +124,7 @@ async def student_client(student_user):
     async with AsyncClient(
         transport=ASGITransport(app=_build_app(student_user, override_get_db)),
         base_url="http://test",
+        follow_redirects=True,
     ) as client:
         yield client
 
