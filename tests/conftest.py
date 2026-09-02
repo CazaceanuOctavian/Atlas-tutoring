@@ -18,25 +18,24 @@ TEST_DATABASE_URL = os.environ.get(
     "postgresql+asyncpg://postgres:postgres@localhost:5432/atlas_test",
 )
 
-_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
-_SessionLocal = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
 
-
-async def _override_get_db():
-    async with _SessionLocal() as session:
-        yield session
-
-
-@pytest_asyncio.fixture(scope="session", autouse=True)
-async def _create_tables():
-    async with _engine.begin() as conn:
+@pytest_asyncio.fixture(scope="session")
+async def engine():
+    eng = create_async_engine(TEST_DATABASE_URL, echo=False)
+    async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    yield
+    yield eng
+    await eng.dispose()
+
+
+@pytest_asyncio.fixture(scope="session")
+async def session_factory(engine):
+    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 @pytest_asyncio.fixture
-async def db_session():
-    async with _SessionLocal() as session:
+async def db_session(session_factory):
+    async with session_factory() as session:
         yield session
 
 
@@ -76,7 +75,11 @@ async def student_user(db_session: AsyncSession):
         await db_session.rollback()
 
 
-def _build_client(user: User) -> AsyncClient:
+def _build_client(user: User, session_factory) -> AsyncClient:
+    async def _override_get_db():
+        async with session_factory() as session:
+            yield session
+
     app = create_app()
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[dependencies.get_current_user] = lambda: user
@@ -91,12 +94,12 @@ def _build_client(user: User) -> AsyncClient:
 
 
 @pytest_asyncio.fixture
-async def admin_client(admin_user: User):
-    async with _build_client(admin_user) as client:
+async def admin_client(admin_user: User, session_factory):
+    async with _build_client(admin_user, session_factory) as client:
         yield client
 
 
 @pytest_asyncio.fixture
-async def student_client(student_user: User):
-    async with _build_client(student_user) as client:
+async def student_client(student_user: User, session_factory):
+    async with _build_client(student_user, session_factory) as client:
         yield client
