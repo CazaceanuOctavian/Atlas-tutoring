@@ -150,3 +150,38 @@ async def test_admin_can_confirm_booking(admin_client: AsyncClient, booking: dic
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "confirmed"
+
+
+async def test_student_cannot_double_book_overlapping_interval(
+    admin_client: AsyncClient,
+    student_client: AsyncClient,
+    enrollment,
+    course: dict,
+):
+    # Two separate availability windows that share the same time interval.
+    # The student is already enrolled (via the `enrollment` fixture).
+    slot_payload = {
+        "course_id": course["id"],
+        "start_time": _START,
+        "end_time": _END,
+        "max_students": 5,
+    }
+
+    r1 = await admin_client.post("/api/v1/availability/", json=slot_payload)
+    assert r1.status_code == 201
+    slot1_id = r1.json()["id"]
+
+    r2 = await admin_client.post("/api/v1/availability/", json=slot_payload)
+    assert r2.status_code == 201
+    slot2_id = r2.json()["id"]
+
+    try:
+        first = await student_client.post("/api/v1/bookings/", json={"availability_id": slot1_id})
+        assert first.status_code == 201
+
+        second = await student_client.post("/api/v1/bookings/", json={"availability_id": slot2_id})
+        assert second.status_code == 409
+        assert "overlaps" in second.json()["detail"].lower()
+    finally:
+        await admin_client.delete(f"/api/v1/availability/{slot1_id}")
+        await admin_client.delete(f"/api/v1/availability/{slot2_id}")
