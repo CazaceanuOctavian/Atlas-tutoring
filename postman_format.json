@@ -46,6 +46,10 @@
       "value": "00000000-0000-0000-0000-000000000007"
     },
     {
+      "key": "student_id",
+      "value": "00000000-0000-0000-0000-000000000007"
+    },
+    {
       "key": "enrollment_id",
       "value": "00000000-0000-0000-0000-000000000008"
     },
@@ -543,6 +547,42 @@
         }
       ],
       "description": "## Professors\n\nAssigns users with the `professor` role to courses. A course can have multiple professors; a professor can be assigned to multiple courses.\n\n**Rules:**\n- Only admins can assign or remove professors.\n- The user must have `role: professor` before being assigned — use the debug token or update the user role first.\n- Professors access course content through the same `enrolled_for_*` guards as students, but via `course_assignments` instead of `enrollments`.\n\n---\n\n### Assign a professor\n**Request:** `POST /courses/{{course_id}}/professors`\n```json\n{ \"user_id\": \"{{user_id}}\" }\n```\n**Response `201`:**\n```json\n{ \"id\": \"...\", \"user_id\": \"...\", \"course_id\": \"...\", \"assigned_at\": \"2026-01-01T00:00:00Z\" }\n```\n\n### Remove a professor\n**Request:** `DELETE /courses/{{course_id}}/professors/{{user_id}}`\n**Response `204`:** No content.\n"
+    },
+    {
+      "name": "Students",
+      "item": [
+        {
+          "name": "List Students",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/students",
+              "host": ["{{base_url}}"],
+              "path": ["students"]
+            },
+            "description": "List students. Admins see all students; professors see only students enrolled in courses they are assigned to. Returns each student's id, name, email, role, and created_at."
+          }
+        },
+        {
+          "name": "Get Student",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/students/{{student_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["students", "{{student_id}}"]
+            },
+            "description": "Retrieve a single student's data by id. Admins can retrieve any student; professors can only retrieve students enrolled in a course they are assigned to. Returns 404 if the id does not belong to an accessible student."
+          }
+        }
+      ],
+      "description": "## Students\n\nRead-only access to student user records. A student is a `User` with `role: student`.\n\n**Rules:**\n- Admins see all students.\n- Professors see only students enrolled in courses they are assigned to (via `course_assignments`). A student is visible to a professor if the student has an enrollment in any course the professor is assigned to.\n- Students have no access.\n\n---\n\n### List students\n**Request:** `GET /students`\n**Response `200`:**\n```json\n[\n  { \"id\": \"...\", \"name\": \"Jane Doe\", \"email\": \"jane@example.com\", \"role\": \"student\", \"created_at\": \"2026-01-01T00:00:00Z\" }\n]\n```\n\n### Get a student\n**Request:** `GET /students/{{student_id}}`\n**Response `200`:**\n```json\n{ \"id\": \"...\", \"name\": \"Jane Doe\", \"email\": \"jane@example.com\", \"role\": \"student\", \"created_at\": \"2026-01-01T00:00:00Z\" }\n```\n**Response `404`:** Student not found or not accessible to you.\n"
     },
     {
       "name": "Availability",
