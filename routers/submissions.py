@@ -8,14 +8,14 @@ from sqlalchemy.orm import selectinload
 
 from config import auth_settings
 from db.session import get_db
-from dependencies import enrolled_for_exercise, get_current_user
+from dependencies import enrolled_for_exercise, get_current_user, professor_only
 from models.exercise import Exercise
 from models.submission import Submission, SubmissionStatus
 from models.submission_test_result import SubmissionTestResult
 from models.test_case import TestCase
 from models.user import User, UserRole
 from schemas.submission import Submission as SubmissionSchema
-from schemas.submission import SubmissionCreate
+from schemas.submission import RunResult, SubmissionCreate
 
 router = APIRouter(prefix="/exercises", tags=["submissions"])
 
@@ -44,6 +44,102 @@ async def _run_single(
 
 def _with_test_results(q):
     return q.options(selectinload(Submission.test_results))
+
+
+async def _grade(code: str, language_value: str, test_cases: list) -> dict:
+    """
+    Run `code` against the exercise's test cases (or once, if there are none)
+    and return a structured grading result. Pure: it talks to the runner and
+    builds a dict, but touches neither the DB nor any Submission.
+
+    Returns keys: status, passed_count, total_count, stdout, stderr, timed_out,
+    exit_code, results (list of per-test-case dicts).
+    """
+    out: dict = {
+        "status": SubmissionStatus.passed,
+        "passed_count": None,
+        "total_count": None,
+        "stdout": None,
+        "stderr": None,
+        "timed_out": None,
+        "exit_code": None,
+        "results": [],
+    }
+
+    try:
+        if not test_cases:
+            run_result = await _run_single(code=code, language=language_value, stdin="")
+            out["stdout"]    = run_result.get("stdout", "")
+            out["stderr"]    = run_result.get("stderr", "")
+            out["exit_code"] = run_result.get("exit_code")
+            out["timed_out"] = run_result.get("timed_out", False)
+            if out["timed_out"]:
+                out["status"] = SubmissionStatus.timeout
+            elif str(out["exit_code"]) == "0":
+                out["status"] = SubmissionStatus.passed
+            else:
+                out["status"] = SubmissionStatus.failed
+            return out
+
+        passed_count = 0
+        final_status = SubmissionStatus.passed
+        last_run: dict | None = None
+
+        for index, tc in enumerate(test_cases):
+            run_result = await _run_single(code=code, language=language_value, stdin=tc.input or "")
+            last_run = run_result
+
+            timed_out = run_result.get("timed_out", False)
+            exit_code = run_result.get("exit_code")
+            stdout    = run_result.get("stdout", "") or ""
+            stderr    = run_result.get("stderr", "") or ""
+            ok = (not timed_out) and str(exit_code) == "0" and stdout.strip() == (tc.expected_output or "").strip()
+            passed_count += int(ok)
+
+            out["results"].append({
+                "test_case_id": tc.id,
+                "order_index":  index,
+                "passed":       ok,
+                "actual_output": stdout,
+                "stderr":       stderr,
+                "exit_code":    str(exit_code) if exit_code is not None else None,
+                "timed_out":    timed_out,
+            })
+
+            if not ok:
+                if timed_out:
+                    final_status = SubmissionStatus.timeout
+                elif str(exit_code) != "0":
+                    final_status = SubmissionStatus.error
+                else:
+                    final_status = SubmissionStatus.failed
+                break  # stop — no further executions
+
+        total = len(test_cases)
+        out["passed_count"] = passed_count
+        out["total_count"]  = total
+        out["status"] = SubmissionStatus.passed if passed_count == total else final_status
+        if last_run:
+            out["stdout"]    = last_run.get("stdout", "")
+            out["stderr"]    = last_run.get("stderr", "")
+            out["exit_code"] = last_run.get("exit_code")
+            out["timed_out"] = last_run.get("timed_out", False)
+        return out
+
+    except httpx.TimeoutException:
+        out["status"]    = SubmissionStatus.timeout
+        out["stderr"]    = "Execution service timed out"
+        out["timed_out"] = True
+        return out
+    except Exception as exc:
+        out["status"] = SubmissionStatus.error
+        out["stderr"] = f"Execution service error: {exc}"
+        return out
+
+
+async def _test_cases_for(db: AsyncSession, exercise_id: uuid.UUID) -> list:
+    result = await db.scalars(select(TestCase).where(TestCase.exercise_id == exercise_id))
+    return result.all()
 
 
 @router.post(
@@ -76,93 +172,19 @@ async def submit_solution(
     submission.status = SubmissionStatus.running
     await db.commit()
 
-    result = await db.scalars(
-        select(TestCase).where(TestCase.exercise_id == exercise_id)
-    )
-    test_cases = result.all()
+    test_cases = await _test_cases_for(db, exercise_id)
+    graded = await _grade(payload.code, payload.language.value, test_cases)
 
-    try:
-        if not test_cases:
-            run_result = await _run_single(
-                code=payload.code,
-                language=payload.language.value,
-                stdin="",
-            )
-            submission.stdout    = run_result.get("stdout", "")
-            submission.stderr    = run_result.get("stderr", "")
-            submission.exit_code = run_result.get("exit_code")
-            submission.timed_out = run_result.get("timed_out", False)
+    submission.status       = graded["status"]
+    submission.passed_count = graded["passed_count"]
+    submission.total_count  = graded["total_count"]
+    submission.stdout       = graded["stdout"]
+    submission.stderr       = graded["stderr"]
+    submission.exit_code    = graded["exit_code"]
+    submission.timed_out    = graded["timed_out"]
 
-            if submission.timed_out:
-                submission.status = SubmissionStatus.timeout
-            elif str(submission.exit_code) == "0":
-                submission.status = SubmissionStatus.passed
-            else:
-                submission.status = SubmissionStatus.failed
-
-        else:
-            passed_count = 0
-            final_status = SubmissionStatus.passed
-            last_run: dict | None = None
-
-            for index, tc in enumerate(test_cases):
-                run_result = await _run_single(
-                    code=payload.code,
-                    language=payload.language.value,
-                    stdin=tc.input or "",
-                )
-                last_run = run_result
-
-                timed_out  = run_result.get("timed_out", False)
-                exit_code  = run_result.get("exit_code")
-                stdout     = run_result.get("stdout", "") or ""
-                stderr     = run_result.get("stderr", "") or ""
-                actual     = stdout.strip()
-                expected   = (tc.expected_output or "").strip()
-
-                ok = (not timed_out) and str(exit_code) == "0" and actual == expected
-                passed_count += int(ok)
-
-                db.add(SubmissionTestResult(
-                    submission_id=submission.id,
-                    test_case_id=tc.id,
-                    order_index=index,
-                    passed=ok,
-                    actual_output=stdout,
-                    stderr=stderr,
-                    exit_code=str(exit_code) if exit_code is not None else None,
-                    timed_out=timed_out,
-                ))
-
-                if not ok:
-                    if timed_out:
-                        final_status = SubmissionStatus.timeout
-                    elif str(exit_code) != "0":
-                        final_status = SubmissionStatus.error
-                    else:
-                        final_status = SubmissionStatus.failed
-                    break  # stop — no further executions
-
-            total = len(test_cases)
-
-            submission.passed_count = passed_count
-            submission.total_count  = total
-            submission.status       = SubmissionStatus.passed if passed_count == total else final_status
-
-            if last_run:
-                submission.stdout    = last_run.get("stdout", "")
-                submission.stderr    = last_run.get("stderr", "")
-                submission.exit_code = last_run.get("exit_code")
-                submission.timed_out = last_run.get("timed_out", False)
-
-    except httpx.TimeoutException:
-        submission.status    = SubmissionStatus.timeout
-        submission.stderr    = "Execution service timed out"
-        submission.timed_out = True
-
-    except Exception as exc:
-        submission.status = SubmissionStatus.error
-        submission.stderr = f"Execution service error: {exc}"
+    for r in graded["results"]:
+        db.add(SubmissionTestResult(submission_id=submission.id, **r))
 
     await db.commit()
 
@@ -172,6 +194,34 @@ async def submit_solution(
         )
     )
     return refreshed
+
+
+@router.post("/{exercise_id}/run", response_model=RunResult)
+async def dry_run(
+    exercise_id: uuid.UUID,
+    payload: SubmissionCreate,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(professor_only),
+):
+    """
+    Dry-run code against the exercise's test cases (admin/professor), returning
+    the same grading shape as a submission but persisting nothing (item #11).
+    """
+    if not await db.get(Exercise, exercise_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercise not found")
+
+    test_cases = await _test_cases_for(db, exercise_id)
+    graded = await _grade(payload.code, payload.language.value, test_cases)
+    return RunResult(
+        status=graded["status"],
+        passed_count=graded["passed_count"],
+        total_count=graded["total_count"],
+        stdout=graded["stdout"],
+        stderr=graded["stderr"],
+        timed_out=graded["timed_out"],
+        exit_code=graded["exit_code"],
+        test_results=graded["results"],
+    )
 
 
 @router.get(
