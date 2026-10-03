@@ -33,6 +33,14 @@ class Course(CourseBase):
     id:         uuid.UUID
     created_at: datetime
 
+    # Populated only with `?include=stats` (item #9); null otherwise.
+    chapter_count:    Optional[int] = None
+    lecture_count:    Optional[int] = None
+    exercise_count:   Optional[int] = None
+    enrolled_count:   Optional[int] = None
+    professor_count:  Optional[int] = None
+    submission_count: Optional[int] = None
+
 
 class CourseDetail(Course):
     """Course with full chapter -> lecture -> block tree."""
