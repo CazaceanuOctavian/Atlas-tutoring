@@ -12,7 +12,7 @@ from models.course_assignment import CourseAssignment
 from models.user import User, UserRole
 from schemas.common import UserSummary
 from schemas.course_assignment import CourseAssignment as CourseAssignmentSchema
-from schemas.course_assignment import CourseAssignmentCreate
+from schemas.course_assignment import CourseAssignmentCreate, CourseAssignmentWithUser
 
 router = APIRouter(prefix="/courses", tags=["professors"])
 
@@ -84,7 +84,7 @@ async def remove_professor(
 
 @router.get(
     "/{course_id}/professors",
-    response_model=list[CourseAssignmentSchema],
+    response_model=list[CourseAssignmentWithUser],
 )
 async def list_professors(
     course_id: uuid.UUID,
@@ -101,7 +101,9 @@ async def list_professors(
     )
     items = []
     for assignment, user in rows.all():
-        item = CourseAssignmentSchema.model_validate(assignment)
+        # Scalar columns only, then attach the joined user explicitly — never
+        # let from_attributes read assignment.user (async lazy-load trap).
+        item = CourseAssignmentWithUser(**CourseAssignmentSchema.model_validate(assignment).model_dump())
         item.user = UserSummary.model_validate(user)
         items.append(item)
     return items

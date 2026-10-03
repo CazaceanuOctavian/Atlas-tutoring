@@ -31,7 +31,13 @@ class BookingRead(_OrmBase):
     status:          BookingStatus
     created_at:      datetime
 
-    # Populated when called with `?expand=student,professor,course` (item #6).
+
+class BookingWithRefs(BookingRead):
+    """
+    List response that can embed summaries via `?expand=student,professor,course`
+    (item #6). Kept off `BookingRead` because these names collide with the ORM
+    relationships `SessionBooking.student/professor/course`; see EnrollmentWithRefs.
+    """
     student:   Optional[UserSummary]   = None
     professor: Optional[UserSummary]   = None
     course:    Optional[CourseSummary] = None

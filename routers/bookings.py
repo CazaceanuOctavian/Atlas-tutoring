@@ -15,15 +15,17 @@ from models.session_booking import BookingStatus, SessionBooking
 from models.user import User, UserRole
 from pagination import as_page, count_query
 from schemas.common import CourseSummary, Page, UserSummary
-from schemas.session_booking import BookingCreate, BookingRead, BookingStatusUpdate
+from schemas.session_booking import BookingCreate, BookingRead, BookingStatusUpdate, BookingWithRefs
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 
 
-def _serialize_bookings(bookings, expand: set[str]) -> list[BookingRead]:
+def _serialize_bookings(bookings, expand: set[str]) -> list[BookingWithRefs]:
     items = []
     for b in bookings:
-        item = BookingRead.model_validate(b)
+        # Scalar columns only, then attach refs — never let from_attributes
+        # read b.student / b.professor / b.course (async lazy-load trap).
+        item = BookingWithRefs(**BookingRead.model_validate(b).model_dump())
         if "student" in expand and b.student is not None:
             item.student = UserSummary.model_validate(b.student)
         if "professor" in expand and b.professor is not None:
@@ -129,7 +131,7 @@ async def create_booking(
     return booking
 
 
-@router.get("/", response_model=list[BookingRead] | Page[BookingRead])
+@router.get("/", response_model=list[BookingWithRefs] | Page[BookingWithRefs])
 async def list_bookings(
     course_id:       Optional[uuid.UUID]  = Query(None),
     availability_id: Optional[uuid.UUID]  = Query(None),

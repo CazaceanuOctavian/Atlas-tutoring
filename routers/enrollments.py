@@ -15,7 +15,7 @@ from models.user import User, UserRole
 from pagination import as_page, count_query
 from schemas.common import CourseSummary, Page, UserSummary
 from schemas.enrollment import Enrollment as EnrollmentSchema
-from schemas.enrollment import EnrollmentCreate
+from schemas.enrollment import EnrollmentCreate, EnrollmentWithRefs
 
 router = APIRouter(prefix="/enrollments", tags=["enrollments"])
 
@@ -24,10 +24,12 @@ def _parse_expand(expand: Optional[str]) -> set[str]:
     return {s.strip() for s in (expand or "").split(",") if s.strip()}
 
 
-def _serialize_enrollments(enrollments, expand: set[str]) -> list[EnrollmentSchema]:
+def _serialize_enrollments(enrollments, expand: set[str]) -> list[EnrollmentWithRefs]:
     items = []
     for enr in enrollments:
-        item = EnrollmentSchema.model_validate(enr)
+        # Validate scalar columns only, then attach refs — never let
+        # from_attributes read enr.course / enr.user (async lazy-load trap).
+        item = EnrollmentWithRefs(**EnrollmentSchema.model_validate(enr).model_dump())
         if "course" in expand and enr.course is not None:
             item.course = CourseSummary.model_validate(enr.course)
         if "user" in expand and enr.user is not None:
@@ -94,7 +96,7 @@ async def unenroll(
     await db.delete(enrollment)
     await db.commit()
 
-@router.get("/", response_model=list[EnrollmentSchema] | Page[EnrollmentSchema])
+@router.get("/", response_model=list[EnrollmentWithRefs] | Page[EnrollmentWithRefs])
 async def list_enrollments(
     user_id:   Optional[uuid.UUID] = Query(None),
     course_id: Optional[uuid.UUID] = Query(None),
@@ -129,7 +131,7 @@ async def list_enrollments(
     return as_page(items, total, skip, limit, envelope)
 
 
-@router.get("/me", response_model=list[EnrollmentSchema])
+@router.get("/me", response_model=list[EnrollmentWithRefs])
 async def my_enrollments(
     expand: Optional[str] = Query(None, description="Comma list: course, user."),
     db: AsyncSession = Depends(get_db),

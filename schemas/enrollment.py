@@ -24,6 +24,17 @@ class Enrollment(EnrollmentBase):
     id:          uuid.UUID
     enrolled_at: datetime
 
-    # Populated when the endpoint is called with `?expand=course,user` (item #6).
+
+class EnrollmentWithRefs(Enrollment):
+    """
+    List response that can embed summaries via `?expand=course,user` (item #6).
+
+    The embed fields live on this subclass — not on `Enrollment` — because their
+    names collide with the ORM relationships `Enrollment.course` / `.user`.
+    If they were on the base schema, `from_attributes` serialization of a bare
+    ORM object (e.g. from POST /enrollments) would lazy-load those relationships
+    in async context and raise MissingGreenlet. The list endpoints build this
+    subclass from the base's scalar data and set the refs explicitly.
+    """
     course: Optional[CourseSummary] = None
     user:   Optional[UserSummary]   = None

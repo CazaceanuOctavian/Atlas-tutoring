@@ -21,5 +21,11 @@ class CourseAssignment(_OrmBase):
     course_id:   uuid.UUID
     assigned_at: datetime
 
-    # Professor profile — always embedded on GET /courses/{id}/professors (item #7).
+
+class CourseAssignmentWithUser(CourseAssignment):
+    """
+    GET /courses/{id}/professors embeds the professor profile (item #7).
+    Kept off the base schema because `user` collides with the ORM relationship
+    `CourseAssignment.user`; see EnrollmentWithRefs for the rationale.
+    """
     user: Optional[UserSummary] = None
