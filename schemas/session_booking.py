@@ -1,9 +1,11 @@
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
 from models.session_booking import BookingStatus
+from schemas.common import CourseSummary, UserSummary
 
 
 class _OrmBase(BaseModel):
@@ -28,3 +30,8 @@ class BookingRead(_OrmBase):
     end_time:        datetime
     status:          BookingStatus
     created_at:      datetime
+
+    # Populated when called with `?expand=student,professor,course` (item #6).
+    student:   Optional[UserSummary]   = None
+    professor: Optional[UserSummary]   = None
+    course:    Optional[CourseSummary] = None

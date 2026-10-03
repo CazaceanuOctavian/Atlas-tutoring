@@ -10,6 +10,7 @@ from dependencies import admin_only, enrolled_for_course
 from models.course import Course
 from models.course_assignment import CourseAssignment
 from models.user import User, UserRole
+from schemas.common import UserSummary
 from schemas.course_assignment import CourseAssignment as CourseAssignmentSchema
 from schemas.course_assignment import CourseAssignmentCreate
 
@@ -90,10 +91,17 @@ async def list_professors(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(enrolled_for_course),
 ):
-    """List all professors assigned to a course."""
+    """List all professors assigned to a course, each with their profile (item #7)."""
     if not await db.get(Course, course_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
-    result = await db.scalars(
-        select(CourseAssignment).where(CourseAssignment.course_id == course_id)
+    rows = await db.execute(
+        select(CourseAssignment, User)
+        .join(User, User.id == CourseAssignment.user_id)
+        .where(CourseAssignment.course_id == course_id)
     )
-    return result.all()
+    items = []
+    for assignment, user in rows.all():
+        item = CourseAssignmentSchema.model_validate(assignment)
+        item.user = UserSummary.model_validate(user)
+        items.append(item)
+    return items

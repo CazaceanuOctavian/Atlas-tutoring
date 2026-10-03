@@ -1,9 +1,11 @@
 import uuid
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from db.session import get_db
 from dependencies import get_current_user, professor_only
@@ -12,6 +14,8 @@ from models.enrollment import Enrollment
 from models.professor_availability import ProfessorAvailability
 from models.session_booking import BookingStatus, SessionBooking
 from models.user import User, UserRole
+from pagination import as_page, count_query
+from schemas.common import CourseSummary, Page, UserSummary
 from schemas.professor_availability import AvailabilityCreate, AvailabilityRead, AvailabilityUpdate
 
 router = APIRouter(prefix="/availability", tags=["availability"])
@@ -21,8 +25,13 @@ router = APIRouter(prefix="/availability", tags=["availability"])
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _build_read(slot: ProfessorAvailability, booked_count: int) -> AvailabilityRead:
-    return AvailabilityRead(
+def _build_read(
+    slot: ProfessorAvailability,
+    booked_count: int,
+    expand: Optional[set[str]] = None,
+) -> AvailabilityRead:
+    expand = expand or set()
+    read = AvailabilityRead(
         id=slot.id,
         professor_id=slot.professor_id,
         course_id=slot.course_id,
@@ -32,6 +41,11 @@ def _build_read(slot: ProfessorAvailability, booked_count: int) -> AvailabilityR
         booked_count=booked_count,
         created_at=slot.created_at,
     )
+    if "professor" in expand and slot.professor is not None:
+        read.professor = UserSummary.model_validate(slot.professor)
+    if "course" in expand and slot.course is not None:
+        read.course = CourseSummary.model_validate(slot.course)
+    return read
 
 
 async def _get_slot_or_404(db: AsyncSession, availability_id: uuid.UUID) -> ProfessorAvailability:
@@ -98,10 +112,16 @@ async def create_availability(
     return _build_read(slot, 0)
 
 
-@router.get("/", response_model=list[AvailabilityRead])
+@router.get("/", response_model=list[AvailabilityRead] | Page[AvailabilityRead])
 async def list_availability(
     course_id:    Optional[uuid.UUID] = Query(None),
     professor_id: Optional[uuid.UUID] = Query(None),
+    since:        Optional[datetime]  = Query(None, description="start_time >= since"),
+    until:        Optional[datetime]  = Query(None, description="start_time <= until"),
+    expand:       Optional[str]       = Query(None, description="Comma list: professor, course."),
+    skip:         int                 = Query(0, ge=0),
+    limit:        int                 = Query(50, ge=1, le=200),
+    envelope:     bool                = Query(False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -132,9 +152,23 @@ async def list_availability(
         if professor_id:
             q = q.where(ProfessorAvailability.professor_id == professor_id)
 
-    slots = (await db.scalars(q)).all()
+    if since is not None:
+        q = q.where(ProfessorAvailability.start_time >= since)
+    if until is not None:
+        q = q.where(ProfessorAvailability.start_time <= until)
+
+    expand_set = {s.strip() for s in (expand or "").split(",") if s.strip()}
+    if "professor" in expand_set:
+        q = q.options(selectinload(ProfessorAvailability.professor))
+    if "course" in expand_set:
+        q = q.options(selectinload(ProfessorAvailability.course))
+
+    q = q.order_by(ProfessorAvailability.start_time.desc())
+    total = await count_query(db, q) if envelope else 0
+    slots = (await db.scalars(q.offset(skip).limit(limit))).all()
     counts = await _booked_counts(db, [s.id for s in slots])
-    return [_build_read(s, counts.get(s.id, 0)) for s in slots]
+    items = [_build_read(s, counts.get(s.id, 0), expand_set) for s in slots]
+    return as_page(items, total, skip, limit, envelope)
 
 
 @router.get("/{availability_id}", response_model=AvailabilityRead)

@@ -4,6 +4,8 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from schemas.common import CourseSummary, UserSummary
+
 
 class _OrmBase(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -53,3 +55,7 @@ class AvailabilityRead(_OrmBase):
     max_students: int
     booked_count: int
     created_at:   datetime
+
+    # Populated when called with `?expand=professor,course` (item #6).
+    professor: Optional[UserSummary]   = None
+    course:    Optional[CourseSummary] = None

@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -12,6 +12,9 @@ from models.exercise import Exercise
 from models.lecture import Lecture
 from models.lecture_block import LectureBlock
 from models.user import User
+from pagination import as_page, count_query
+from reorder import apply_order
+from schemas.common import Page, ReorderPayload
 from schemas.exercise import Exercise as ExerciseSchema
 from schemas.lecture import Lecture as LectureSchema
 from schemas.lecture import LectureCreate, LectureDetail, LectureUpdate
@@ -21,19 +24,21 @@ from schemas.lecture_block import LectureBlockCreate, LectureBlockUpdate
 router = APIRouter(prefix="/lectures", tags=["lectures"])
 
 
-@router.get("/", response_model=list[LectureSchema])
+@router.get("/", response_model=list[LectureSchema] | Page[LectureSchema])
 async def list_lectures(
     chapter_id: uuid.UUID | None = None,
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=200),
+    envelope: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(student_only),
 ):
-    q = select(Lecture).order_by(Lecture.position)
+    stmt = select(Lecture).order_by(Lecture.position)
     if chapter_id:
-        q = q.where(Lecture.chapter_id == chapter_id)
-    result = await db.scalars(q.offset(skip).limit(limit))
-    return result.all()
+        stmt = stmt.where(Lecture.chapter_id == chapter_id)
+    total = await count_query(db, stmt) if envelope else 0
+    rows = (await db.scalars(stmt.offset(skip).limit(limit))).all()
+    return as_page(rows, total, skip, limit, envelope)
 
 
 @router.post("/", response_model=LectureSchema, status_code=status.HTTP_201_CREATED)
@@ -199,3 +204,16 @@ async def list_exercises_for_lecture(
         .order_by(Exercise.position)
     )
     return result.all()
+
+
+@router.put("/{lecture_id}/exercises/order", status_code=status.HTTP_204_NO_CONTENT)
+async def reorder_exercises(
+    lecture_id: uuid.UUID,
+    payload: ReorderPayload,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
+):
+    """Reorder the exercises within a lecture (item #10)."""
+    if not await db.get(Lecture, lecture_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Lecture not found")
+    await apply_order(db, Exercise, payload.ids, parent_field="lecture_id", parent_id=lecture_id)

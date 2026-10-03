@@ -1,7 +1,10 @@
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
+
+from schemas.common import CourseSummary, UserSummary
 
 
 class _OrmBase(BaseModel):
@@ -20,3 +23,7 @@ class EnrollmentCreate(EnrollmentBase):
 class Enrollment(EnrollmentBase):
     id:          uuid.UUID
     enrolled_at: datetime
+
+    # Populated when the endpoint is called with `?expand=course,user` (item #6).
+    course: Optional[CourseSummary] = None
+    user:   Optional[UserSummary]   = None

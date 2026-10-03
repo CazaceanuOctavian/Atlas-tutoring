@@ -1,16 +1,19 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import get_db
 from dependencies import admin_only, enrolled_for_exercise, student_only
+from models.chapter import Chapter
 from models.exercise import Exercise
 from models.exercise_block import ExerciseBlock
 from models.lecture import Lecture
 from models.test_case import TestCase
 from models.user import User
+from pagination import as_page, count_query
+from schemas.common import Page
 from schemas.exercise import Exercise as ExerciseSchema
 from schemas.exercise import ExerciseCreate, ExerciseUpdate
 from schemas.exercise_block import ExerciseBlock as ExerciseBlockSchema
@@ -21,19 +24,29 @@ from schemas.test_case import TestCaseCreate, TestCaseUpdate
 router = APIRouter(prefix="/exercises", tags=["exercises"])
 
 
-@router.get("/", response_model=list[ExerciseSchema])
+@router.get("/", response_model=list[ExerciseSchema] | Page[ExerciseSchema])
 async def list_exercises(
     lecture_id: uuid.UUID | None = None,
-    skip: int = 0,
-    limit: int = 100,
+    course_id:  uuid.UUID | None = Query(None, description="All exercises in a course."),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=200),
+    envelope: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(student_only),
 ):
-    q = select(Exercise).order_by(Exercise.position)
+    stmt = select(Exercise).order_by(Exercise.position)
     if lecture_id:
-        q = q.where(Exercise.lecture_id == lecture_id)
-    result = await db.scalars(q.offset(skip).limit(limit))
-    return result.all()
+        stmt = stmt.where(Exercise.lecture_id == lecture_id)
+    if course_id:
+        in_course = (
+            select(Lecture.id)
+            .join(Chapter, Chapter.id == Lecture.chapter_id)
+            .where(Chapter.course_id == course_id)
+        )
+        stmt = stmt.where(Exercise.lecture_id.in_(in_course))
+    total = await count_query(db, stmt) if envelope else 0
+    rows = (await db.scalars(stmt.offset(skip).limit(limit))).all()
+    return as_page(rows, total, skip, limit, envelope)
 
 
 @router.post("/", response_model=ExerciseSchema, status_code=status.HTTP_201_CREATED)

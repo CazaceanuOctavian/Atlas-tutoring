@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -11,27 +11,32 @@ from models.chapter import Chapter
 from models.course import Course
 from models.lecture import Lecture
 from models.user import User
+from pagination import as_page, count_query
+from reorder import apply_order
 from schemas.chapter import Chapter as ChapterSchema
 from schemas.chapter import ChapterCreate, ChapterDetail, ChapterUpdate
+from schemas.common import Page, ReorderPayload
 from schemas.lecture import Lecture as LectureSchema
 
 router = APIRouter(prefix="/chapters", tags=["chapters"])
 
 
-@router.get("/", response_model=list[ChapterSchema])
+@router.get("/", response_model=list[ChapterSchema] | Page[ChapterSchema])
 async def list_chapters(
     course_id: uuid.UUID | None = None,
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=200),
+    envelope: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(student_only),
 ):
     """Flat list — no enrollment check since course_id is optional."""
-    q = select(Chapter).order_by(Chapter.position)
+    stmt = select(Chapter).order_by(Chapter.position)
     if course_id:
-        q = q.where(Chapter.course_id == course_id)
-    result = await db.scalars(q.offset(skip).limit(limit))
-    return result.all()
+        stmt = stmt.where(Chapter.course_id == course_id)
+    total = await count_query(db, stmt) if envelope else 0
+    rows = (await db.scalars(stmt.offset(skip).limit(limit))).all()
+    return as_page(rows, total, skip, limit, envelope)
 
 
 @router.post("/", response_model=ChapterSchema, status_code=status.HTTP_201_CREATED)
@@ -125,3 +130,16 @@ async def list_lectures_for_chapter(
         .order_by(Lecture.position)
     )
     return result.all()
+
+
+@router.put("/{chapter_id}/lectures/order", status_code=status.HTTP_204_NO_CONTENT)
+async def reorder_lectures(
+    chapter_id: uuid.UUID,
+    payload: ReorderPayload,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(admin_only),
+):
+    """Reorder the lectures within a chapter (item #10)."""
+    if not await db.get(Chapter, chapter_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Chapter not found")
+    await apply_order(db, Lecture, payload.ids, parent_field="chapter_id", parent_id=chapter_id)

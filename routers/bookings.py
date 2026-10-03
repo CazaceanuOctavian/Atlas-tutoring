@@ -1,9 +1,11 @@
 import uuid
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from db.session import get_db
 from dependencies import get_current_user
@@ -11,9 +13,25 @@ from models.enrollment import Enrollment
 from models.professor_availability import ProfessorAvailability
 from models.session_booking import BookingStatus, SessionBooking
 from models.user import User, UserRole
+from pagination import as_page, count_query
+from schemas.common import CourseSummary, Page, UserSummary
 from schemas.session_booking import BookingCreate, BookingRead, BookingStatusUpdate
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
+
+
+def _serialize_bookings(bookings, expand: set[str]) -> list[BookingRead]:
+    items = []
+    for b in bookings:
+        item = BookingRead.model_validate(b)
+        if "student" in expand and b.student is not None:
+            item.student = UserSummary.model_validate(b.student)
+        if "professor" in expand and b.professor is not None:
+            item.professor = UserSummary.model_validate(b.professor)
+        if "course" in expand and b.course is not None:
+            item.course = CourseSummary.model_validate(b.course)
+        items.append(item)
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -111,10 +129,19 @@ async def create_booking(
     return booking
 
 
-@router.get("/", response_model=list[BookingRead])
+@router.get("/", response_model=list[BookingRead] | Page[BookingRead])
 async def list_bookings(
-    course_id:       Optional[uuid.UUID] = Query(None),
-    availability_id: Optional[uuid.UUID] = Query(None),
+    course_id:       Optional[uuid.UUID]  = Query(None),
+    availability_id: Optional[uuid.UUID]  = Query(None),
+    student_id:      Optional[uuid.UUID]  = Query(None),
+    professor_id:    Optional[uuid.UUID]  = Query(None),
+    status_:         Optional[BookingStatus] = Query(None, alias="status"),
+    since:           Optional[datetime]   = Query(None, description="start_time >= since"),
+    until:           Optional[datetime]   = Query(None, description="start_time <= until"),
+    expand:          Optional[str]        = Query(None, description="Comma list: student, professor, course."),
+    skip:            int                  = Query(0, ge=0),
+    limit:           int                  = Query(50, ge=1, le=200),
+    envelope:        bool                 = Query(False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -124,22 +151,43 @@ async def list_bookings(
     - Professor: bookings on their availability windows.
     - Student: their own bookings.
     """
-    q = select(SessionBooking)
+    stmt = select(SessionBooking)
 
     if current_user.role == UserRole.admin:
         pass  # no extra filter
     elif current_user.role == UserRole.professor:
-        q = q.where(SessionBooking.professor_id == current_user.id)
+        stmt = stmt.where(SessionBooking.professor_id == current_user.id)
     else:
-        q = q.where(SessionBooking.student_id == current_user.id)
+        stmt = stmt.where(SessionBooking.student_id == current_user.id)
 
     if course_id:
-        q = q.where(SessionBooking.course_id == course_id)
+        stmt = stmt.where(SessionBooking.course_id == course_id)
     if availability_id:
-        q = q.where(SessionBooking.availability_id == availability_id)
+        stmt = stmt.where(SessionBooking.availability_id == availability_id)
+    if student_id:
+        stmt = stmt.where(SessionBooking.student_id == student_id)
+    if professor_id:
+        stmt = stmt.where(SessionBooking.professor_id == professor_id)
+    if status_ is not None:
+        stmt = stmt.where(SessionBooking.status == status_)
+    if since is not None:
+        stmt = stmt.where(SessionBooking.start_time >= since)
+    if until is not None:
+        stmt = stmt.where(SessionBooking.start_time <= until)
 
-    result = await db.scalars(q)
-    return result.all()
+    expand_set = {s.strip() for s in (expand or "").split(",") if s.strip()}
+    if "student" in expand_set:
+        stmt = stmt.options(selectinload(SessionBooking.student))
+    if "professor" in expand_set:
+        stmt = stmt.options(selectinload(SessionBooking.professor))
+    if "course" in expand_set:
+        stmt = stmt.options(selectinload(SessionBooking.course))
+
+    stmt = stmt.order_by(SessionBooking.start_time.desc())
+    total = await count_query(db, stmt) if envelope else 0
+    rows = (await db.scalars(stmt.offset(skip).limit(limit))).all()
+    items = _serialize_bookings(rows, expand_set)
+    return as_page(items, total, skip, limit, envelope)
 
 
 @router.get("/{booking_id}", response_model=BookingRead)
